@@ -20,7 +20,7 @@ AnyRainy — это современный, быстрый и удобный в�
 
 ## 🚀 Быстрый старт
 
-Сайт будет доступен по ссылке: [AnyRainy](https://anyrainy-corp.github.io/anyrainy/)
+Сайт будет доступен по ссылке: [AnyRainy](https://anyrainy-corp.github.io/anyrainy)
 
 ## 👥 Разработчики и контрибьюторы
 
