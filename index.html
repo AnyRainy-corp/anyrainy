@@ -3,7 +3,19 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AnyRainy</title>
+    <title>AnyRainy — аниме онлайн</title>
+    <meta name="description" content="Смотрите лучшие аниме-сериалы онлайн. Без лишнего шума, только контент.">
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="AnyRainy — аниме онлайн">
+    <meta property="og:description" content="Смотрите лучшие аниме-сериалы онлайн. Без лишнего шума, только контент.">
+    <meta property="og:image" content="https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&q=80&w=1200&h=630">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="AnyRainy — аниме онлайн">
+    <meta name="twitter:description" content="Смотрите лучшие аниме-сериалы онлайн.">
+    <meta name="twitter:image" content="https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&q=80&w=1200&h=630">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -19,6 +31,7 @@
         }
     </script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         body {
@@ -54,19 +67,23 @@
         }
         .search-glow-button {
             position: relative; overflow: visible; display: inline-flex;
-            align-items: center; justify-content: center;
+            align-items: center; justify-content: center; flex-shrink: 0;
             animation: searchButtonFloat 2.2s ease-in-out infinite;
             box-shadow: 0 8px 18px rgba(255,90,95,0.22), 0 0 14px rgba(255,90,95,0.26);
             transform-origin: center; will-change: transform, box-shadow;
         }
         .search-glow-button::before {
-            content: ''; position: absolute; inset: -11px; border-radius: 9999px;
-            background: radial-gradient(circle, rgba(255,90,95,0.42) 0%, rgba(255,90,95,0.26) 34%, rgba(255,140,148,0.16) 56%, rgba(255,90,95,0) 78%);
-            filter: blur(16px); opacity: 0.95; z-index: -1;
+            content: ''; position: absolute; inset: -6px; border-radius: 9999px;
+            background: radial-gradient(circle, rgba(255,90,95,0.38) 0%, rgba(255,90,95,0.20) 40%, rgba(255,90,95,0) 75%);
+            filter: blur(10px); opacity: 0.9; z-index: -1;
             transition: opacity 0.2s ease, transform 0.2s ease, filter 0.2s ease;
         }
-        .search-glow-button:hover::before { opacity: 1; transform: scale(1.1); filter: blur(18px); }
+        .search-glow-button:hover::before { opacity: 1; transform: scale(1.1); filter: blur(12px); }
         .search-glow-button:hover { box-shadow: 0 10px 22px rgba(255,90,95,0.28), 0 0 20px rgba(255,90,95,0.34); animation-duration: 1.5s; }
+        @media (max-width: 640px) {
+            .search-glow-button::before { inset: -4px; filter: blur(6px); }
+            .search-glow-button { animation: none; }
+        }
 
         .auth-backdrop { background: rgba(15,15,18,0.65); backdrop-filter: blur(14px); }
 
@@ -107,7 +124,7 @@
 
             <!-- Desktop search bar (appears on scroll) -->
             <div id="nav-search" class="hidden md:flex items-center border-subtle rounded-full px-3 py-2 card-shadow bg-white dark:bg-[#1e1e1e] transition-all duration-300 w-1/3 opacity-0 scale-95 pointer-events-none">
-                <input type="text" id="nav-search-input" placeholder="Найти аниме..."
+                <input type="text" id="nav-search-input" data-i18n-placeholder="nav_search_placeholder" placeholder="Найти аниме..."
                     class="flex-1 bg-transparent outline-none text-sm px-3 text-gray-800 dark:text-gray-200 placeholder-gray-400">
                 <button onclick="triggerSearch('nav')" class="search-glow-button bg-airbnb p-2 rounded-full text-white hover:bg-airbnbDark transition-colors">
                     <i data-lucide="search" class="w-4 h-4"></i>
@@ -124,11 +141,11 @@
                 <!-- Language toggle -->
                 <button id="lang-toggle" onclick="toggleLang()" class="text-xs font-bold text-gray-600 dark:text-gray-300 hover:text-airbnb dark:hover:text-airbnb transition-colors border border-subtle rounded-full px-3 py-1.5 bg-white dark:bg-[#1e1e1e]">RU</button>
                 <!-- Catalog -->
-                <a href="#" onclick="showSection('catalog')" class="text-gray-800 dark:text-gray-200 hover:text-airbnb transition-colors">Каталог</a>
+                <a href="#" onclick="showSection('catalog')" class="text-gray-800 dark:text-gray-200 hover:text-airbnb transition-colors" data-i18n="catalog">Каталог</a>
                 <!-- Favorites -->
                 <button onclick="openFavorites()" class="text-gray-800 dark:text-gray-200 hover:text-airbnb transition-colors flex items-center gap-1.5">
                     <i data-lucide="heart" class="w-4 h-4"></i>
-                    Избранное
+                    <span data-i18n="favorites_nav">Избранное</span>
                 </button>
                 <!-- Account -->
                 <button id="account-button" onclick="handleAccountButtonClick()" class="flex items-center gap-2 border-subtle rounded-full px-3 py-2 bg-white dark:bg-[#1e1e1e] hover:shadow-md transition-shadow cursor-pointer">
@@ -159,21 +176,21 @@
             <!-- Hero -->
             <div class="flex flex-col md:flex-row items-center gap-6 md:gap-12 pt-6 md:pt-0">
                 <div class="flex-1 space-y-5 md:space-y-8 w-full">
-                    <h1 class="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight text-gray-900 dark:text-white leading-tight">
+                    <h1 class="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight text-gray-900 dark:text-white leading-tight" data-i18n-html="hero_title">
                         Откройте для себя<br><span class="text-airbnb">мир аниме</span>
                     </h1>
-                    <p class="text-lg md:text-xl text-gray-600 dark:text-gray-400 font-light">
+                    <p class="text-lg md:text-xl text-gray-600 dark:text-gray-400 font-light" data-i18n="hero_subtitle">
                         Смотрите лучшие аниме-сериалы. Без лишнего шума, только контент.
                     </p>
                     <!-- Big search bar -->
-                    <div class="w-full max-w-xl bg-white dark:bg-[#1e1e1e] rounded-full card-shadow border border-subtle flex items-center p-2 relative z-10 transition-transform duration-300 hover:scale-[1.02]">
-                        <div class="flex-1 px-4 md:px-6">
-                            <label class="block text-xs font-bold text-gray-900 dark:text-white mb-0.5">Поиск</label>
-                            <input type="text" id="big-search-input" placeholder="Название аниме..."
+                    <div class="w-full max-w-xl bg-white dark:bg-[#1e1e1e] rounded-full card-shadow border border-subtle flex items-center p-2 relative z-10 overflow-hidden md:overflow-visible transition-transform duration-300 md:hover:scale-[1.02]">
+                        <div class="flex-1 min-w-0 px-3 md:px-6">
+                            <label class="block text-xs font-bold text-gray-900 dark:text-white mb-0.5" data-i18n="search_label">Поиск</label>
+                            <input type="text" id="big-search-input" data-i18n-placeholder="search_placeholder" placeholder="Название аниме..."
                                 class="w-full bg-transparent outline-none text-gray-800 dark:text-gray-200 text-sm placeholder-gray-400">
                         </div>
-                        <button onclick="triggerSearch('big')" class="search-glow-button bg-airbnb hover:bg-airbnbDark text-white p-3 md:p-4 rounded-full transition-colors flex items-center justify-center">
-                            <i data-lucide="search" class="w-4 h-4 md:w-5 md:h-5"></i>
+                        <button onclick="triggerSearch('big')" class="search-glow-button bg-airbnb hover:bg-airbnbDark text-white p-3 rounded-full transition-colors flex items-center justify-center">
+                            <i data-lucide="search" class="w-4 h-4"></i>
                         </button>
                     </div>
                 </div>
@@ -188,13 +205,18 @@
 
             <!-- Catalog -->
             <div id="catalog-container" class="space-y-6 pt-2">
-                <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 border border-subtle rounded-2xl px-5 py-4">
+                <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 rounded-2xl px-1 py-2">
                     <div>
                         <h2 class="text-xl md:text-2xl font-bold text-gray-900 dark:text-white" id="catalog-subtitle">Популярное сейчас</h2>
                         <p class="text-sm text-gray-500 dark:text-gray-400 mt-1" id="catalog-description">Подборка аниме из базы MyAnimeList</p>
                     </div>
-                    <div class="flex items-center gap-3 shrink-0">
-                        <label for="sort-select" class="text-sm font-medium text-gray-600 dark:text-gray-300">Сортировка</label>
+                    <div class="flex items-center gap-2 shrink-0 flex-wrap">
+                        <button id="genre-toggle-btn" onclick="toggleGenrePanel()"
+                            class="flex items-center gap-1.5 px-3 py-2 rounded-full border border-subtle bg-white dark:bg-[#1e1e1e] text-sm font-medium text-gray-700 dark:text-gray-200 hover:border-airbnb transition-colors">
+                            <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5"></i>
+                            Жанры
+                        </button>
+                        <label for="sort-select" class="text-sm font-medium text-gray-600 dark:text-gray-300" data-i18n="sort_label">Сортировка</label>
                         <select id="sort-select" onchange="setSortMode(this.value)" class="px-3 md:px-4 py-2 rounded-full border border-subtle bg-white dark:bg-[#1e1e1e] text-sm text-gray-800 dark:text-gray-100 outline-none cursor-pointer">
                             <option value="default">По умолчанию</option>
                             <option value="rating">По рейтингу</option>
@@ -202,12 +224,14 @@
                         </select>
                     </div>
                 </div>
+                <!-- Genre filter panel (toggleable) -->
+                <div id="genre-filter-panel" class="hidden border border-subtle rounded-2xl px-5 py-4 bg-white dark:bg-[#1a1a1a]"></div>
                 <div id="anime-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6"></div>
                 <div id="catalog-actions" class="flex justify-center pt-2"></div>
                 <div id="recommendations-section" class="hidden pt-6 border-t border-subtle">
                     <div class="flex flex-col gap-1 mb-6">
-                        <h3 class="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">Можно ещё посмотреть</h3>
-                        <p class="text-sm text-gray-500 dark:text-gray-400">Несколько рекомендаций, если нужный тайтл не подошёл</p>
+                        <h3 class="text-xl md:text-2xl font-bold text-gray-900 dark:text-white" data-i18n="recommendations_title">Можно ещё посмотреть</h3>
+                        <p class="text-sm text-gray-500 dark:text-gray-400" data-i18n="recommendations_desc">Несколько рекомендаций, если нужный тайтл не подошёл</p>
                     </div>
                     <div id="recommendations-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6"></div>
                 </div>
@@ -218,7 +242,7 @@
         <section id="watch-section" class="hidden space-y-4 md:space-y-6">
             <button onclick="showSection('catalog')" class="flex items-center gap-2 text-gray-500 hover:text-black dark:hover:text-white transition-colors group text-sm font-medium mb-2">
                 <i data-lucide="chevron-left" class="w-4 h-4 group-hover:-translate-x-1 transition-transform"></i>
-                Назад к каталогу
+                <span data-i18n="back_to_catalog">Назад к каталогу</span>
             </button>
             <div id="player-container" class="space-y-4 md:space-y-6"></div>
         </section>
@@ -238,11 +262,11 @@
 
     <!-- ========================= AUTH MODAL ========================= -->
     <div id="auth-modal" class="hidden fixed inset-0 z-[60] auth-backdrop px-4 md:px-6 py-4 md:py-10 overflow-y-auto flex items-start md:items-center justify-center">
-        <div class="w-full max-w-md bg-white dark:bg-[#1e1e1e] rounded-[2rem] border border-subtle card-shadow overflow-hidden mt-4 md:mt-0">
+        <div class="w-full max-w-md bg-white dark:bg-[#1e1e1e] rounded-[2rem] card-shadow overflow-hidden mt-4 md:mt-0">
             <div class="p-5 md:p-6 border-b border-subtle flex items-center justify-between">
                 <div>
-                    <h3 id="auth-title" onclick="handleAdminTap()" class="text-xl md:text-2xl font-bold text-gray-900 dark:text-white cursor-default select-none">Аккаунт</h3>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">Локальная регистрация для комментариев</p>
+                    <h3 id="auth-title" onclick="handleAdminTap()" class="text-xl md:text-2xl font-bold text-gray-900 dark:text-white cursor-default select-none" data-i18n="account_title">Аккаунт</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400" data-i18n="account_subtitle">Локальная регистрация для комментариев</p>
                 </div>
                 <button onclick="closeAuthModal()" class="p-1 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">
                     <i data-lucide="x" class="w-5 h-5"></i>
@@ -250,20 +274,20 @@
             </div>
             <div class="p-5 md:p-6 space-y-5">
                 <div id="auth-tabs" class="grid grid-cols-2 gap-2 bg-gray-100 dark:bg-[#2a2a2a] rounded-2xl p-1">
-                    <button id="auth-tab-login" onclick="switchAuthMode('login')" class="px-4 py-3 rounded-xl text-sm font-semibold bg-white dark:bg-[#1e1e1e] text-gray-900 dark:text-white">Вход</button>
-                    <button id="auth-tab-register" onclick="switchAuthMode('register')" class="px-4 py-3 rounded-xl text-sm font-semibold text-gray-500 dark:text-gray-300">Регистрация</button>
+                    <button id="auth-tab-login" onclick="switchAuthMode('login')" class="px-4 py-3 rounded-xl text-sm font-semibold bg-white dark:bg-[#1e1e1e] text-gray-900 dark:text-white" data-i18n="auth_tab_login">Вход</button>
+                    <button id="auth-tab-register" onclick="switchAuthMode('register')" class="px-4 py-3 rounded-xl text-sm font-semibold text-gray-500 dark:text-gray-300" data-i18n="auth_tab_register">Регистрация</button>
                 </div>
                 <form id="auth-form" class="space-y-4" onsubmit="submitAuthForm(event)">
                     <div class="space-y-2">
-                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Имя пользователя</label>
-                        <input id="auth-username" type="text" required class="w-full px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none" placeholder="Например, Sora">
+                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300" data-i18n="username_label">Имя пользователя</label>
+                        <input id="auth-username" type="text" required data-i18n-placeholder="username_placeholder" class="w-full px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none" placeholder="Например, Sora">
                     </div>
                     <div class="space-y-2">
-                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Пароль</label>
-                        <input id="auth-password" type="password" required class="w-full px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none" placeholder="Минимум 4 символа">
+                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300" data-i18n="password_label">Пароль</label>
+                        <input id="auth-password" type="password" required data-i18n-placeholder="password_placeholder" class="w-full px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none" placeholder="Минимум 4 символа">
                     </div>
-                    <p id="auth-status" class="text-sm text-gray-500 dark:text-gray-400">Войди или создай аккаунт, чтобы писать комментарии.</p>
-                    <button type="submit" class="w-full bg-airbnb hover:bg-airbnbDark text-white py-3 rounded-xl font-bold transition-colors">Продолжить</button>
+                    <p id="auth-status" class="text-sm text-gray-500 dark:text-gray-400" data-i18n="auth_status_default">Войди или создай аккаунт, чтобы писать комментарии.</p>
+                    <button type="submit" class="w-full bg-airbnb hover:bg-airbnbDark text-white py-3 rounded-xl font-bold transition-colors" data-i18n="auth_submit">Продолжить</button>
                 </form>
 
                 <!-- Logged in: profile panel -->
@@ -281,38 +305,39 @@
                         </div>
                         <div>
                             <p id="auth-current-user" class="text-lg font-bold text-gray-900 dark:text-white"></p>
-                            <p class="text-xs text-gray-500 dark:text-gray-400">В системе</p>
+                            <p class="text-xs text-gray-500 dark:text-gray-400" data-i18n="in_system">В системе</p>
                         </div>
                     </div>
                     <!-- Bio -->
                     <div class="space-y-2">
-                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">О себе</label>
-                        <textarea id="profile-bio-input" rows="2" placeholder="Расскажи немного о себе..."
+                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300" data-i18n="profile_bio_label">О себе</label>
+                        <textarea id="profile-bio-input" rows="2" data-i18n-placeholder="profile_bio_placeholder"
+                            placeholder="Расскажи немного о себе..."
                             class="w-full px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none resize-none text-sm placeholder-gray-400"></textarea>
-                        <button id="save-bio-btn" onclick="saveBio()" class="w-full bg-gray-100 dark:bg-[#2a2a2a] text-gray-800 dark:text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200 dark:hover:bg-[#333] transition-colors">Сохранить профиль</button>
+                        <button id="save-bio-btn" onclick="saveBio()" class="w-full bg-gray-100 dark:bg-[#2a2a2a] text-gray-800 dark:text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-200 dark:hover:bg-[#333] transition-colors" data-i18n="save_profile">Сохранить профиль</button>
                     </div>
                     <!-- Favorites count -->
                     <button onclick="closeAuthModal(); openFavorites()" class="w-full flex items-center justify-between px-4 py-3 rounded-xl border border-subtle bg-gray-50 dark:bg-[#2a2a2a] hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">
                         <div class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
                             <i data-lucide="heart" class="w-4 h-4 text-airbnb"></i>
-                            Избранное
+                            <span data-i18n="favorites_nav">Избранное</span>
                         </div>
                         <span id="profile-fav-count" class="text-sm font-bold text-airbnb">0</span>
                     </button>
                     <!-- Logout -->
-                    <button onclick="logout()" class="w-full bg-gray-900 dark:bg-white dark:text-black text-white py-3 rounded-xl font-bold transition-colors">Выйти</button>
+                    <button onclick="logout()" class="w-full bg-gray-900 dark:bg-white dark:text-black text-white py-3 rounded-xl font-bold transition-colors" data-i18n="logout">Выйти</button>
                 </div>
 
                 <!-- Admin panel secret access -->
                 <div id="admin-secret-panel" class="hidden space-y-3 border-t border-subtle pt-4">
-                    <p class="text-[10px] text-gray-400 dark:text-gray-600 font-mono tracking-widest uppercase text-center">Панель администратора</p>
-                    <input id="admin-password-input" type="password" placeholder="Пароль администратора" autocomplete="off"
+                    <p class="text-[10px] text-gray-400 dark:text-gray-600 font-mono tracking-widest uppercase text-center" data-i18n="admin_secret_label">Панель администратора</p>
+                    <input id="admin-password-input" type="password" data-i18n-placeholder="admin_password_placeholder" placeholder="Пароль администратора" autocomplete="off"
                         onkeydown="if(event.key==='Enter') checkAdminPassword()"
                         class="w-full px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none text-sm">
-                    <button onclick="checkAdminPassword()" class="w-full bg-gray-900 dark:bg-white dark:text-black text-white py-3 rounded-xl font-bold transition-colors text-sm">
+                    <button onclick="checkAdminPassword()" class="w-full bg-gray-900 dark:bg-white dark:text-black text-white py-3 rounded-xl font-bold transition-colors text-sm" data-i18n="admin_login_btn">
                         Войти в панель
                     </button>
-                    <p id="admin-password-error" class="hidden text-xs text-red-500 text-center">Неверный пароль</p>
+                    <p id="admin-password-error" class="hidden text-xs text-red-500 text-center" data-i18n="admin_wrong_password">Неверный пароль</p>
                 </div>
             </div>
         </div>
@@ -320,11 +345,11 @@
 
     <!-- ========================= FAVORITES MODAL ========================= -->
     <div id="favorites-modal" class="hidden fixed inset-0 z-[60] auth-backdrop px-4 py-4 overflow-y-auto flex items-start justify-center">
-        <div class="w-full max-w-2xl bg-white dark:bg-[#1e1e1e] rounded-[2rem] border border-subtle card-shadow mt-4 mb-4">
+        <div class="w-full max-w-2xl bg-white dark:bg-[#1e1e1e] rounded-[2rem] card-shadow mt-4 mb-4 overflow-hidden">
             <div class="p-5 border-b border-subtle flex items-center justify-between">
                 <div>
-                    <h3 class="text-xl font-bold text-gray-900 dark:text-white">Избранное</h3>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">Сохранённые аниме</p>
+                    <h3 class="text-xl font-bold text-gray-900 dark:text-white" data-i18n="favorites_title">Избранное</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400" data-i18n="favorites_sub">Сохранённые аниме</p>
                 </div>
                 <button onclick="closeFavorites()" class="p-1 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">
                     <i data-lucide="x" class="w-5 h-5"></i>
@@ -335,8 +360,8 @@
                     <div class="w-16 h-16 bg-gray-100 dark:bg-[#2a2a2a] rounded-full flex items-center justify-center mx-auto">
                         <i data-lucide="heart" class="w-8 h-8 text-gray-300 dark:text-gray-600"></i>
                     </div>
-                    <p class="text-gray-500 dark:text-gray-400 font-medium">Войди в аккаунт, чтобы сохранять избранное</p>
-                    <button onclick="closeFavorites(); openAuthModal('login')" class="bg-airbnb hover:bg-airbnbDark text-white px-6 py-2.5 rounded-xl font-semibold transition-colors">Войти</button>
+                    <p class="text-gray-500 dark:text-gray-400 font-medium" data-i18n="favorites_guest_msg">Войди в аккаунт, чтобы сохранять избранное</p>
+                    <button onclick="closeFavorites(); openAuthModal('login')" class="bg-airbnb hover:bg-airbnbDark text-white px-6 py-2.5 rounded-xl font-semibold transition-colors" data-i18n="favorites_login_btn">Войти</button>
                 </div>
                 <div id="favorites-content"></div>
             </div>
@@ -353,8 +378,8 @@
                         <i data-lucide="shield" class="w-4 h-4 text-white dark:text-black"></i>
                     </div>
                     <div>
-                        <h3 class="text-lg font-bold text-gray-900 dark:text-white">Панель управления</h3>
-                        <p class="text-xs text-gray-500 dark:text-gray-400">Только для администратора</p>
+                        <h3 class="text-lg font-bold text-gray-900 dark:text-white" data-i18n="admin_panel_title">Панель управления</h3>
+                        <p class="text-xs text-gray-500 dark:text-gray-400" data-i18n="admin_panel_sub">Только для администратора</p>
                     </div>
                 </div>
                 <button onclick="closeAdminModal()" class="p-1.5 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
@@ -363,8 +388,8 @@
             </div>
 
             <div class="flex border-b border-subtle">
-                <button onclick="switchAdminTab('stats')" id="admin-tab-stats" class="admin-tab active-tab flex-1 py-3 text-sm font-semibold">Статистика</button>
-                <button onclick="switchAdminTab('data')" id="admin-tab-data" class="admin-tab flex-1 py-3 text-sm font-semibold">Данные</button>
+                <button onclick="switchAdminTab('stats')" id="admin-tab-stats" class="admin-tab active-tab flex-1 py-3 text-sm font-semibold" data-i18n="admin_tab_stats">Статистика</button>
+                <button onclick="switchAdminTab('data')" id="admin-tab-data" class="admin-tab flex-1 py-3 text-sm font-semibold" data-i18n="admin_tab_data">Данные</button>
             </div>
 
             <div id="admin-panel-stats" class="p-5 md:p-6"></div>
@@ -376,7 +401,7 @@
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <button onclick="adminClearComments()" class="flex items-center gap-3 px-4 py-3.5 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] text-sm font-semibold text-gray-700 dark:text-gray-300 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400 transition-colors text-left">
-                        <i data-lucide="message-x" class="w-4 h-4 shrink-0"></i>
+                        <i data-lucide="trash-2" class="w-4 h-4 shrink-0"></i>
                         Удалить все комментарии
                     </button>
 
@@ -402,13 +427,13 @@
 
     <!-- ========================= MOBILE SEARCH OVERLAY ========================= -->
     <div id="mobile-search-overlay" class="hidden fixed inset-0 z-[55] bg-white dark:bg-[#121212] flex flex-col md:hidden">
-        <div class="flex items-center gap-2 px-3 py-3 border-b border-subtle">
+        <div class="flex items-center gap-2 px-3 py-3 border-b border-subtle overflow-hidden">
             <button onclick="closeMobileSearch()" class="p-2 shrink-0 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">
                 <i data-lucide="arrow-left" class="w-5 h-5"></i>
             </button>
             <div class="flex-1 bg-gray-100 dark:bg-[#2a2a2a] rounded-full flex items-center px-4 py-2.5 gap-2">
                 <i data-lucide="search" class="w-4 h-4 text-gray-400 shrink-0"></i>
-                <input type="text" id="mobile-search-input" placeholder="Найти аниме..." autocomplete="off"
+                <input type="text" id="mobile-search-input" data-i18n-placeholder="mobile_search_placeholder" placeholder="Найти аниме..." autocomplete="off"
                     class="bg-transparent outline-none flex-1 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400">
                 <button id="mobile-search-clear" onclick="clearMobileSearch()" class="hidden shrink-0 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
                     <i data-lucide="x" class="w-4 h-4"></i>
@@ -419,7 +444,9 @@
             </button>
         </div>
         <div class="flex-1 flex items-start justify-center pt-16 px-4">
-            <p class="text-sm text-gray-400 dark:text-gray-500 text-center">Введи название и нажми <span class="text-airbnb font-semibold">Поиск</span></p>
+            <p class="text-sm text-gray-400 dark:text-gray-500 text-center">
+                <span data-i18n="mobile_search_hint">Введи название и нажми</span> <span class="text-airbnb font-semibold" data-i18n="mobile_search_hint_btn">Поиск</span>
+            </p>
         </div>
     </div>
 
@@ -428,15 +455,15 @@
         <div class="grid grid-cols-4" style="padding-bottom: max(8px, env(safe-area-inset-bottom))">
             <button onclick="showSection('home')" id="mob-nav-home" class="mobile-nav-btn active flex flex-col items-center gap-0.5 pt-2 pb-1.5 transition-colors">
                 <i data-lucide="home" class="w-5 h-5"></i>
-                <span class="text-[10px] font-semibold">Главная</span>
+                <span class="text-[10px] font-semibold" data-i18n="mob_home">Главная</span>
             </button>
             <button onclick="showSection('catalog')" id="mob-nav-catalog" class="mobile-nav-btn flex flex-col items-center gap-0.5 pt-2 pb-1.5 transition-colors">
                 <i data-lucide="layout-grid" class="w-5 h-5"></i>
-                <span class="text-[10px] font-semibold">Каталог</span>
+                <span class="text-[10px] font-semibold" data-i18n="mob_catalog">Каталог</span>
             </button>
             <button onclick="openMobileSearch()" id="mob-nav-search" class="mobile-nav-btn flex flex-col items-center gap-0.5 pt-2 pb-1.5 transition-colors">
                 <i data-lucide="search" class="w-5 h-5"></i>
-                <span class="text-[10px] font-semibold">Поиск</span>
+                <span class="text-[10px] font-semibold" data-i18n="mob_search">Поиск</span>
             </button>
             <button onclick="handleAccountButtonClick()" id="mob-nav-account" class="mobile-nav-btn flex flex-col items-center gap-0.5 pt-2 pb-1.5 transition-colors">
                 <i data-lucide="user" class="w-5 h-5"></i>

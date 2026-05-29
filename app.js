@@ -37,6 +37,9 @@ let currentSortMode = 'default';
 let catalogLoadObserver = null;
 let authMode = 'login';
 let currentUser = null;
+let selectedGenres = new Set();
+let genreFilterOpen = false;
+let genreSearchQ = '';
 
 const PAGE_SIZE = 24;
 const AUTH_STORAGE_KEY = 'anistream_users';
@@ -58,15 +61,172 @@ function escapeHtml(value = '') {
         .replace(/'/g, '&#39;');
 }
 
+// ─── Translations ─────────────────────────────────────────────────────────────
+
+const STRINGS = {
+    ru: {
+        catalog: 'Каталог', favorites_nav: 'Избранное', login_btn: 'Войти',
+        hero_title: 'Откройте для себя<br><span class="text-airbnb">мир аниме</span>',
+        hero_subtitle: 'Смотрите лучшие аниме-сериалы. Без лишнего шума, только контент.',
+        search_label: 'Поиск', search_placeholder: 'Название аниме...',
+        nav_search_placeholder: 'Найти аниме...', mobile_search_placeholder: 'Найти аниме...',
+        mobile_search_hint: 'Введи название и нажми', mobile_search_hint_btn: 'Поиск',
+        sort_label: 'Сортировка', sort_default: 'По умолчанию', sort_rating: 'По рейтингу', sort_title: 'По названию',
+        popular_now: 'Популярное сейчас', catalog_desc: 'Подборка аниме из базы MyAnimeList',
+        recommendations_title: 'Можно ещё посмотреть', recommendations_desc: 'Несколько рекомендаций, если нужный тайтл не подошёл',
+        episodes_count: n => `${n} эпизодов`, nothing_found: 'Ничего не найдено...', no_recommendations: 'Пока нет рекомендаций.',
+        load_more_loading: 'Загружаем ещё аниме...', load_more_scroll: 'Листай ниже, новые аниме загрузятся автоматически',
+        source_search: 'Результаты из базы MyAnimeList', source_top: 'Каталог из базы MyAnimeList', no_more: 'Больше результатов нет.',
+        popular_now_label: 'Популярное сейчас', by_rating_label: 'По рейтингу', by_title_label: 'По названию А-Я',
+        search_results_label: q => `Результаты поиска: ${q}`, searching_label: q => `Ищем: ${q}`,
+        search_found_label: q => `Найдено по запросу: ${q}`, search_results_sub: 'Результаты поиска, ниже — рекомендации',
+        search_min_chars: 'Введите хотя бы 2 символа', search_error: 'Не удалось выполнить поиск',
+        back_to_catalog: 'Назад к каталогу', watching: 'Просмотр', episode_select: n => `Серия ${n}`,
+        open_in_browser: 'В браузере', rating_badge: r => `Рейтинг ${r}`, ep_badge: n => `${n} эп.`,
+        in_favorites: 'В избранном', to_favorites: 'В избранное', anime_loading: 'Загрузка аниме...',
+        kodik_unavailable: 'Kodik недоступен', kodik_unavailable_sub: 'Русская озвучка не найдена для этого аниме.<br>Попробуй Megaplay.',
+        player_error_title: 'Плеер не загрузился', player_error_sub: 'Попробуй другой сервер или открой напрямую',
+        next_server: 'Следующий сервер', open_browser_btn: 'Открыть в браузере',
+        comments_title: 'Комментарии', comments_subtitle: 'Отзывы зрителей об этом аниме',
+        no_comments: 'Пока нет комментариев. Будь первым.',
+        comment_placeholder: 'Поделись впечатлением об этом аниме...',
+        comment_writing_as: u => `Пишешь как ${u}`, comment_submit: 'Отправить комментарий',
+        comment_delete: 'Удалить', comment_login_title: 'Хочешь оставить комментарий?',
+        comment_login_sub: 'Войди или создай локальный аккаунт.', comment_login_btn: 'Войти / Регистрация',
+        comment_too_short: 'Комментарий слишком короткий.',
+        account_title: 'Аккаунт', account_subtitle: 'Локальная регистрация для комментариев',
+        auth_tab_login: 'Вход', auth_tab_register: 'Регистрация',
+        username_label: 'Имя пользователя', username_placeholder: 'Например, Sora',
+        password_label: 'Пароль', password_placeholder: 'Минимум 4 символа',
+        auth_status_default: 'Войди или создай аккаунт, чтобы писать комментарии.',
+        auth_status_login: 'Войди, чтобы писать комментарии под аниме.',
+        auth_status_register: 'Создай аккаунт, чтобы писать комментарии под аниме.',
+        auth_submit: 'Продолжить', username_short: 'Имя пользователя должно быть не короче 3 символов.',
+        password_short: 'Пароль должен быть не короче 4 символов.', user_exists: 'Такой пользователь уже существует.',
+        wrong_credentials: 'Неверное имя пользователя или пароль.',
+        profile_bio_label: 'О себе', profile_bio_placeholder: 'Расскажи немного о себе...',
+        save_profile: 'Сохранить профиль', profile_saved: 'Сохранено!', in_system: 'В системе', logout: 'Выйти',
+        favorites_title: 'Избранное', favorites_sub: 'Сохранённые аниме',
+        favorites_guest_msg: 'Войди в аккаунт, чтобы сохранять избранное', favorites_login_btn: 'Войти',
+        no_favorites: 'Нет избранных аниме.<br>Нажми <span class="text-airbnb font-semibold">♡</span> на карточке, чтобы добавить.',
+        admin_panel_title: 'Панель управления', admin_panel_sub: 'Только для администратора',
+        admin_tab_stats: 'Статистика', admin_tab_data: 'Данные',
+        admin_secret_label: 'Панель администратора', admin_password_placeholder: 'Пароль администратора',
+        admin_login_btn: 'Войти в панель', admin_wrong_password: 'Неверный пароль',
+        mob_home: 'Главная', mob_catalog: 'Каталог', mob_search: 'Поиск', mob_profile: 'Профиль',
+        add_to_fav: 'В избранное', remove_from_fav: 'Убрать из избранного',
+    },
+    en: {
+        catalog: 'Catalog', favorites_nav: 'Favorites', login_btn: 'Sign in',
+        hero_title: 'Discover the<br><span class="text-airbnb">world of anime</span>',
+        hero_subtitle: 'Watch the best anime series. No noise, just content.',
+        search_label: 'Search', search_placeholder: 'Anime title...',
+        nav_search_placeholder: 'Find anime...', mobile_search_placeholder: 'Find anime...',
+        mobile_search_hint: 'Type a title and press', mobile_search_hint_btn: 'Search',
+        sort_label: 'Sort', sort_default: 'Default', sort_rating: 'By rating', sort_title: 'By title',
+        popular_now: 'Popular now', catalog_desc: 'Anime collection from MyAnimeList',
+        recommendations_title: 'You might also like', recommendations_desc: 'A few recommendations if the title wasn\'t right',
+        episodes_count: n => `${n} episodes`, nothing_found: 'Nothing found...', no_recommendations: 'No recommendations yet.',
+        load_more_loading: 'Loading more anime...', load_more_scroll: 'Scroll down to auto-load more',
+        source_search: 'Results from MyAnimeList', source_top: 'Catalog from MyAnimeList', no_more: 'No more results.',
+        popular_now_label: 'Popular now', by_rating_label: 'By rating', by_title_label: 'By title A-Z',
+        search_results_label: q => `Search results: ${q}`, searching_label: q => `Searching: ${q}`,
+        search_found_label: q => `Found for: ${q}`, search_results_sub: 'Search results, recommendations below',
+        search_min_chars: 'Enter at least 2 characters', search_error: 'Search failed',
+        back_to_catalog: 'Back to catalog', watching: 'Watching', episode_select: n => `Episode ${n}`,
+        open_in_browser: 'In browser', rating_badge: r => `Rating ${r}`, ep_badge: n => `${n} ep.`,
+        in_favorites: 'In favorites', to_favorites: 'Add to favorites', anime_loading: 'Loading anime...',
+        kodik_unavailable: 'Kodik unavailable', kodik_unavailable_sub: 'Russian dub not found for this anime.<br>Try Megaplay.',
+        player_error_title: 'Player failed to load', player_error_sub: 'Try another server or open directly',
+        next_server: 'Next server', open_browser_btn: 'Open in browser',
+        comments_title: 'Comments', comments_subtitle: 'Viewer reviews for this anime',
+        no_comments: 'No comments yet. Be the first.',
+        comment_placeholder: 'Share your thoughts about this anime...',
+        comment_writing_as: u => `Commenting as ${u}`, comment_submit: 'Post comment',
+        comment_delete: 'Delete', comment_login_title: 'Want to leave a comment?',
+        comment_login_sub: 'Sign in or create a local account.', comment_login_btn: 'Sign in / Register',
+        comment_too_short: 'Comment is too short.',
+        account_title: 'Account', account_subtitle: 'Local registration for comments',
+        auth_tab_login: 'Login', auth_tab_register: 'Register',
+        username_label: 'Username', username_placeholder: 'E.g. Sora',
+        password_label: 'Password', password_placeholder: 'At least 4 characters',
+        auth_status_default: 'Sign in or create an account to post comments.',
+        auth_status_login: 'Sign in to post comments on anime.',
+        auth_status_register: 'Create an account to post comments on anime.',
+        auth_submit: 'Continue', username_short: 'Username must be at least 3 characters.',
+        password_short: 'Password must be at least 4 characters.', user_exists: 'This user already exists.',
+        wrong_credentials: 'Incorrect username or password.',
+        profile_bio_label: 'About me', profile_bio_placeholder: 'Tell a little about yourself...',
+        save_profile: 'Save profile', profile_saved: 'Saved!', in_system: 'Signed in', logout: 'Sign out',
+        favorites_title: 'Favorites', favorites_sub: 'Saved anime',
+        favorites_guest_msg: 'Sign in to save favorites', favorites_login_btn: 'Sign in',
+        no_favorites: 'No favorite anime yet.<br>Click <span class="text-airbnb font-semibold">♡</span> on a card to add.',
+        admin_panel_title: 'Control Panel', admin_panel_sub: 'Admin only',
+        admin_tab_stats: 'Statistics', admin_tab_data: 'Data',
+        admin_secret_label: 'Admin panel', admin_password_placeholder: 'Admin password',
+        admin_login_btn: 'Enter panel', admin_wrong_password: 'Wrong password',
+        mob_home: 'Home', mob_catalog: 'Catalog', mob_search: 'Search', mob_profile: 'Profile',
+        add_to_fav: 'Add to favorites', remove_from_fav: 'Remove from favorites',
+    }
+};
+
+function t(key, ...args) {
+    const str = STRINGS[currentLang]?.[key] ?? STRINGS.ru[key] ?? key;
+    return typeof str === 'function' ? str(...args) : str;
+}
+
+function renderTranslations() {
+    document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+    document.querySelectorAll('[data-i18n-html]').forEach(el => { el.innerHTML = t(el.dataset.i18nHtml); });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+    const sel = document.getElementById('sort-select');
+    if (sel && sel.options.length >= 3) {
+        sel.options[0].text = t('sort_default');
+        sel.options[1].text = t('sort_rating');
+        sel.options[2].text = t('sort_title');
+    }
+}
+
 // ─── Language ─────────────────────────────────────────────────────────────────
+
+function applyLangToAllAnime() {
+    const updateTitle = (anime) => {
+        anime.displayTitle = currentLang === 'en'
+            ? (anime.titleEn || anime.title || anime.displayTitle)
+            : (anime.titleRu || anime.displayTitle);
+    };
+    animeData.forEach(updateTitle);
+    recommendedAnime.forEach(updateTitle);
+    if (currentAnime) updateTitle(currentAnime);
+}
 
 function toggleLang() {
     currentLang = currentLang === 'ru' ? 'en' : 'ru';
     TRANSLATE_TO = currentLang === 'en' ? null : currentLang;
     setCookie('anyrainy_lang', currentLang, 365);
-    // Clear cache so synopses re-translate on next view
-    Object.keys(synopsisCache).forEach(k => delete synopsisCache[k]);
+    // Не очищаем кеш переводов при смене языка — он нужен при возврате в RU
+    applyLangToAllAnime();
     updateLangToggle();
+    renderTranslations();
+    if (currentSection === 'home') {
+        renderCatalog();
+    } else if (currentSection === 'watch' && currentAnime) {
+        renderPlayerUI(currentAnime);
+        // Если переключились на RU и перевода ещё нет — запустить перевод
+        if (TRANSLATE_TO && !synopsisCache[currentAnime.id]) {
+            const id = currentAnime.id;
+            const src = currentAnime.synopsisEn || currentAnime.synopsis;
+            const el = document.getElementById('anime-synopsis');
+            if (el) el.classList.add('synopsis-loading');
+            translateSynopsis(src, id).then(translated => {
+                if (currentAnime?.id === id && translated !== src) {
+                    synopsisCache[id] = translated;
+                    const el2 = document.getElementById('anime-synopsis');
+                    if (el2) { el2.textContent = translated; el2.classList.remove('synopsis-loading'); }
+                }
+            });
+        }
+    }
 }
 
 function updateLangToggle() {
@@ -164,8 +324,8 @@ function saveBio() {
     saveProfileData({ bio: input.value.trim() });
     const btn = document.getElementById('save-bio-btn');
     if (btn) {
-        btn.textContent = 'Сохранено!';
-        setTimeout(() => { btn.textContent = 'Сохранить профиль'; }, 2000);
+        btn.textContent = t('profile_saved');
+        setTimeout(() => { btn.textContent = t('save_profile'); }, 2000);
     }
 }
 
@@ -254,7 +414,7 @@ function renderFavoritesModal() {
                 <div class="w-16 h-16 bg-gray-100 dark:bg-[#2a2a2a] rounded-full flex items-center justify-center mx-auto">
                     <i data-lucide="heart" class="w-8 h-8 text-gray-300 dark:text-gray-600"></i>
                 </div>
-                <p class="text-gray-500 dark:text-gray-400">Нет избранных аниме.<br>Нажми <span class="text-airbnb font-semibold">♡</span> на карточке, чтобы добавить.</p>
+                <p class="text-gray-500 dark:text-gray-400">${t('no_favorites')}</p>
             </div>`;
         lucide.createIcons();
         return;
@@ -272,7 +432,7 @@ function updateAuthUI() {
     const form = document.getElementById('auth-form');
     const panel = document.getElementById('auth-logged-in-panel');
 
-    if (label) label.textContent = currentUser ? currentUser.username : 'Войти';
+    if (label) label.textContent = currentUser ? currentUser.username : t('login_btn');
 
     const mobNavLabel = document.getElementById('mob-nav-account-label');
     if (mobNavLabel) {
@@ -283,9 +443,7 @@ function updateAuthUI() {
     if (currentUserEl) currentUserEl.textContent = currentUser ? currentUser.username : '';
 
     if (status && !currentUser) {
-        status.textContent = authMode === 'login'
-            ? 'Войди, чтобы писать комментарии под аниме.'
-            : 'Создай аккаунт, чтобы писать комментарии под аниме.';
+        status.textContent = authMode === 'login' ? t('auth_status_login') : t('auth_status_register');
     }
 
     const tabs = document.getElementById('auth-tabs');
@@ -345,12 +503,10 @@ function switchAuthMode(mode) {
         registerTab.className = `px-4 py-3 rounded-xl text-sm font-semibold ${!loginActive ? 'bg-white dark:bg-[#1e1e1e] text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-300'}`;
     }
 
-    if (formButton) formButton.textContent = mode === 'login' ? 'Войти' : 'Создать аккаунт';
+    if (formButton) formButton.textContent = t('auth_submit');
 
     if (status && !currentUser) {
-        status.textContent = mode === 'login'
-            ? 'Войди, чтобы писать комментарии под аниме.'
-            : 'Создай аккаунт, чтобы писать комментарии под аниме.';
+        status.textContent = mode === 'login' ? t('auth_status_login') : t('auth_status_register');
     }
 }
 
@@ -365,6 +521,9 @@ function openAuthModal(mode = authMode) {
 
 function closeAuthModal() {
     document.getElementById('auth-modal')?.classList.add('hidden');
+    document.getElementById('admin-secret-panel')?.classList.add('hidden');
+    const passInput = document.getElementById('admin-password-input');
+    if (passInput) passInput.value = '';
 }
 
 function handleAccountButtonClick() {
@@ -383,12 +542,12 @@ function submitAuthForm(event) {
     const normalizedUsername = username.toLowerCase();
 
     if (username.length < 3) {
-        if (status) status.textContent = 'Имя пользователя должно быть не короче 3 символов.';
+        if (status) status.textContent = t('username_short');
         return;
     }
 
     if (password.length < 4) {
-        if (status) status.textContent = 'Пароль должен быть не короче 4 символов.';
+        if (status) status.textContent = t('password_short');
         return;
     }
 
@@ -396,7 +555,7 @@ function submitAuthForm(event) {
 
     if (authMode === 'register') {
         if (users[normalizedUsername]) {
-            if (status) status.textContent = 'Такой пользователь уже существует.';
+            if (status) status.textContent = t('user_exists');
             return;
         }
         users[normalizedUsername] = { username, password };
@@ -404,7 +563,7 @@ function submitAuthForm(event) {
     } else {
         const user = users[normalizedUsername];
         if (!user || user.password !== password) {
-            if (status) status.textContent = 'Неверное имя пользователя или пароль.';
+            if (status) status.textContent = t('wrong_credentials');
             return;
         }
     }
@@ -449,29 +608,29 @@ function renderCommentsSection(anime) {
                         <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${escapeHtml(comment.createdAt)}</p>
                     </div>
                     ${currentUser && currentUser.username === comment.username ? `
-                        <button onclick="deleteComment('${anime.id}', '${comment.id}')" class="text-xs text-airbnb hover:text-airbnbDark transition-colors">Удалить</button>
+                        <button onclick="deleteComment('${anime.id}', '${comment.id}')" class="text-xs text-airbnb hover:text-airbnbDark transition-colors">${t('comment_delete')}</button>
                     ` : ''}
                 </div>
                 <p class="text-sm text-gray-700 dark:text-gray-300 mt-3 leading-6">${escapeHtml(comment.text)}</p>
             </div>
         `).join('')
-        : '<div class="rounded-2xl border border-subtle p-6 text-sm text-gray-500 dark:text-gray-400 bg-white dark:bg-[#1e1e1e]">Пока нет комментариев. Будь первым.</div>';
+        : `<div class="rounded-2xl border border-subtle p-6 text-sm text-gray-500 dark:text-gray-400 bg-white dark:bg-[#1e1e1e]">${t('no_comments')}</div>`;
 
     const formHtml = currentUser ? `
         <form class="space-y-3" onsubmit="submitComment(event)">
-            <textarea id="comment-input" rows="4" placeholder="Поделись впечатлением об этом аниме..." class="w-full px-4 py-3 rounded-2xl border border-subtle outline-none bg-white dark:bg-[#2a2a2a] dark:text-white resize-none"></textarea>
+            <textarea id="comment-input" rows="4" placeholder="${t('comment_placeholder')}" class="w-full px-4 py-3 rounded-2xl border border-subtle outline-none bg-white dark:bg-[#2a2a2a] dark:text-white resize-none"></textarea>
             <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <p class="text-sm text-gray-500 dark:text-gray-400">Пишешь как ${escapeHtml(currentUser.username)}</p>
-                <button type="submit" class="w-full sm:w-auto bg-airbnb hover:bg-airbnbDark text-white px-5 py-3 rounded-xl font-semibold transition-colors">Отправить комментарий</button>
+                <p class="text-sm text-gray-500 dark:text-gray-400">${t('comment_writing_as', escapeHtml(currentUser.username))}</p>
+                <button type="submit" class="w-full sm:w-auto bg-airbnb hover:bg-airbnbDark text-white px-5 py-3 rounded-xl font-semibold transition-colors">${t('comment_submit')}</button>
             </div>
         </form>
     ` : `
         <div class="rounded-2xl border border-subtle p-6 bg-white dark:bg-[#1e1e1e] flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-                <p class="font-semibold text-gray-900 dark:text-white">Хочешь оставить комментарий?</p>
-                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Войди или создай локальный аккаунт.</p>
+                <p class="font-semibold text-gray-900 dark:text-white">${t('comment_login_title')}</p>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">${t('comment_login_sub')}</p>
             </div>
-            <button onclick="openAuthModal('register')" class="bg-airbnb hover:bg-airbnbDark text-white px-5 py-3 rounded-xl font-semibold transition-colors">Войти / Регистрация</button>
+            <button onclick="openAuthModal('register')" class="bg-airbnb hover:bg-airbnbDark text-white px-5 py-3 rounded-xl font-semibold transition-colors">${t('comment_login_btn')}</button>
         </div>
     `;
 
@@ -479,8 +638,8 @@ function renderCommentsSection(anime) {
         <div class="space-y-6">
             <div class="flex items-center justify-between gap-4">
                 <div>
-                    <h3 class="text-2xl font-bold text-gray-900 dark:text-white">Комментарии</h3>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Отзывы зрителей об этом аниме</p>
+                    <h3 class="text-2xl font-bold text-gray-900 dark:text-white">${t('comments_title')}</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">${t('comments_subtitle')}</p>
                 </div>
                 <span class="px-3 py-1 rounded-full bg-gray-100 dark:bg-[#2a2a2a] text-sm font-semibold text-gray-700 dark:text-gray-200">${comments.length}</span>
             </div>
@@ -502,7 +661,7 @@ function submitComment(event) {
     const text = input?.value.trim() || '';
 
     if (text.length < 2) {
-        alert('Комментарий слишком короткий.');
+        alert(t('comment_too_short'));
         return;
     }
 
@@ -531,6 +690,7 @@ let currentAnime = null;
 let currentEpisodeNum = 1;
 let currentServerIndex = 0;
 let currentPlayerVoiceIdx = 0;
+let watchToken = 0;
 
 // Kodik (русская озвучка)
 const KODIK_TOKEN = '56a768d08f43091901c44b54fe970049';
@@ -557,21 +717,23 @@ function extractKodikEpisodes(results) {
 async function fetchKodikData(malId) {
     if (kodikCache[malId] !== undefined) return kodikCache[malId];
     try {
+        // No with_episodes=true — avoids huge responses that silently fail to parse
         const res = await fetch(
-            `https://kodik-api.com/search?token=${KODIK_TOKEN}&shikimori_id=${malId}&with_episodes=true&translation_type=voice&limit=20`,
-            { method: 'POST' }
+            `https://kodik-api.com/search?token=${KODIK_TOKEN}&shikimori_id=${malId}&translation_type=voice&limit=20`
         );
         const data = await res.json();
         if (!data.results?.length) { kodikCache[malId] = { translations: [], episodes: [] }; return kodikCache[malId]; }
         const seen = new Set();
         const translations = data.results
-            .filter(r => { if (seen.has(r.translation.id)) return false; seen.add(r.translation.id); return true; })
+            .filter(r => r.translation?.id && !seen.has(r.translation.id) && seen.add(r.translation.id))
             .map(r => ({
                 id: r.translation.id,
                 title: r.translation.title,
-                link: r.link.startsWith('//') ? 'https:' + r.link : r.link
+                link: r.link.startsWith('//') ? 'https:' + r.link : r.link,
             }));
-        const episodes = extractKodikEpisodes(data.results);
+        // Use episodes_count from first result for the episode dropdown
+        const epCount = data.results[0]?.episodes_count || 0;
+        const episodes = epCount > 0 ? Array.from({ length: epCount }, (_, i) => i + 1) : [];
         kodikCache[malId] = { translations, episodes };
         return kodikCache[malId];
     } catch (_) { kodikCache[malId] = { translations: [], episodes: [] }; return kodikCache[malId]; }
@@ -600,34 +762,19 @@ async function fetchAnilistId(malId) {
 
 // Плееры. builtinSelection: true — плеер сам управляет сериями/озвучкой внутри
 const AUTO_SERVERS = [
-    {
-        name: 'Kodik RU',
-        type: 'kodik',
-        builtinSelection: true
-    },
-    {
-        name: 'Megaplay',
-        type: 'auto',
-        builtinSelection: false,
-        url: (malId, ep) => `https://megaplay.buzz/stream/mal/${malId}/${ep}/sub`
-    },
-    {
-        name: 'Megaplay DUB',
-        type: 'auto',
-        builtinSelection: false,
-        url: (malId, ep) => `https://megaplay.buzz/stream/mal/${malId}/${ep}/dub`
-    },
-    {
-        name: 'VidPlus',
-        type: 'auto',
-        builtinSelection: true,
-        url: (malId, ep) => `https://player.vidplus.to/embed/anime/${currentAnime?.anilistId || malId}/${ep}?dub=false&autoplay=true`
-    },
+    { name: 'Kodik RU', type: 'kodik', builtinSelection: true },
+    { name: 'Megaplay', type: 'auto', builtinSelection: false,
+      url: (malId, ep) => `https://megaplay.buzz/stream/mal/${malId}/${ep}/sub` },
+    { name: 'Megaplay DUB', type: 'auto', builtinSelection: false,
+      url: (malId, ep) => `https://megaplay.buzz/stream/mal/${malId}/${ep}/dub` },
+    { name: 'VidPlus', type: 'auto', builtinSelection: true,
+      url: (malId, ep) => `https://player.vidplus.to/embed/anime/${currentAnime?.anilistId || malId}/${ep}?dub=false&autoplay=true` },
 ];
 
 // ─── Genre translations ───────────────────────────────────────────────────────
 
 const genreTranslations = {
+    // Explicit genres
     Action: 'Экшен', Adventure: 'Приключения', 'Avant Garde': 'Авангард',
     'Award Winning': 'Отмечено наградами', 'Boys Love': 'Сёнэн-ай',
     Comedy: 'Комедия', Drama: 'Драма', Ecchi: 'Этти', Erotica: 'Эротика',
@@ -637,7 +784,28 @@ const genreTranslations = {
     Sports: 'Спорт', Supernatural: 'Сверхъестественное', Suspense: 'Саспенс',
     Psychological: 'Психология', Thriller: 'Триллер', Mecha: 'Меха',
     Music: 'Музыка', School: 'Школа', Seinen: 'Сэйнэн', Shoujo: 'Сёдзё',
-    Shounen: 'Сёнэн', Josei: 'Дзёсэй', Kids: 'Для детей'
+    Shounen: 'Сёнэн', Josei: 'Дзёсэй', Kids: 'Для детей',
+    // Themes
+    Military: 'Военное', Parody: 'Пародия', Samurai: 'Самурай',
+    'Martial Arts': 'Боевые искусства', Historical: 'Исторический',
+    Space: 'Космос', Racing: 'Гонки', 'Super Power': 'Суперспособности',
+    Vampire: 'Вампиры', Demons: 'Демоны', Magic: 'Магия',
+    Police: 'Полиция', Prison: 'Тюрьма', Mythology: 'Мифология',
+    Survival: 'Выживание', 'Time Travel': 'Путешествия во времени',
+    Isekai: 'Исэкай', 'Reverse Harem': 'Обратный гарем',
+    'Video Game': 'Видеоигры', Workplace: 'Работа', CGDCT: 'Милые девушки',
+    Childcare: 'Уход за детьми', Delinquents: 'Хулиганы',
+    Detective: 'Детектив', Educational: 'Образовательное',
+    'Gag Humor': 'Абсурдный юмор', Gore: 'Жестокость',
+    'High Stakes Game': 'Смертельные игры', Idols: 'Айдолы',
+    Iyashikei: 'Успокаивающее', 'Love Polygon': 'Любовный многоугольник',
+    'Magical Sex Shift': 'Смена пола', 'Medical': 'Медицина',
+    'Meta': 'Мета', 'Music': 'Музыка', 'Mythology': 'Мифология',
+    'Organized Crime': 'Организованная преступность',
+    'Otaku Culture': 'Отаку-культура', Performing: 'Выступления',
+    Pets: 'Питомцы', Reincarnation: 'Реинкарнация', Romantic: 'Романтическое',
+    'Showbiz': 'Шоу-бизнес', Strategy: 'Стратегия', 'Team Sports': 'Командный спорт',
+    'Urban Fantasy': 'Городское фэнтези', 'Visual Arts': 'Визуальные искусства',
 };
 
 function translateGenre(name) {
@@ -647,15 +815,21 @@ function translateGenre(name) {
 // ─── Data normalization ───────────────────────────────────────────────────────
 
 function normalizeAnimeItem(item) {
+    const titleRu = getRussianTitle(item);
+    const titleEn = item.title_english || item.title || titleRu;
+    const rawSynopsis = item.synopsis || '';
     return {
         id: item.mal_id,
         title: item.title,
-        displayTitle: getRussianTitle(item),
-        tags: (item.genres || []).map(g => translateGenre(g.name)),
+        titleRu,
+        titleEn,
+        displayTitle: currentLang === 'en' ? titleEn : titleRu,
+        tags: (item.genres || []).map(g => g.name), // raw English — translate at display time
         rating: item.score || 0,
         episodes: item.episodes || 12,
         image: item.images?.jpg?.large_image_url || item.images?.jpg?.image_url || '',
-        synopsis: item.synopsis || 'Описание пока недоступно.',
+        synopsis: rawSynopsis,
+        synopsisEn: rawSynopsis, // original English, never overwritten
         year: item.year || '',
         season: item.season || '',
         status: item.status || 'Статус неизвестен',
@@ -720,11 +894,138 @@ function setSortMode(mode) {
     }
 }
 
+// ─── Genre filter ─────────────────────────────────────────────────────────────
+
+function getGenreCounts() {
+    const counts = {};
+    animeData.forEach(a => (a.tags || []).forEach(g => { counts[g] = (counts[g] || 0) + 1; }));
+    return counts;
+}
+
+function filterByGenres(items) {
+    if (!selectedGenres.size) return items;
+    return items.filter(a => [...selectedGenres].every(g => (a.tags || []).includes(g)));
+}
+
+function toggleGenre(genre) {
+    if (selectedGenres.has(genre)) selectedGenres.delete(genre);
+    else selectedGenres.add(genre);
+    renderGenreFilterList();
+    const grid = document.getElementById('anime-grid');
+    if (grid) { grid.innerHTML = renderAnimeCards(filterByGenres(sortAnimeList(animeData))); lucide.createIcons(); }
+}
+
+function clearGenres() {
+    selectedGenres.clear();
+    genreSearchQ = '';
+    const inp = document.getElementById('genre-search-input');
+    if (inp) inp.value = '';
+    renderGenreFilterList();
+    const grid = document.getElementById('anime-grid');
+    if (grid) { grid.innerHTML = renderAnimeCards(sortAnimeList(animeData)); lucide.createIcons(); }
+}
+
+function filterGenreSearch(q) {
+    genreSearchQ = q.toLowerCase();
+    renderGenreFilterList(); // только список, input не трогаем
+}
+
+function toggleGenrePanel() {
+    genreFilterOpen = !genreFilterOpen;
+    const panel = document.getElementById('genre-filter-panel');
+    const btn = document.getElementById('genre-toggle-btn');
+    if (!panel) return;
+    panel.classList.toggle('hidden', !genreFilterOpen);
+    if (btn) {
+        btn.classList.toggle('bg-airbnb', genreFilterOpen);
+        btn.classList.toggle('text-white', genreFilterOpen);
+        btn.classList.toggle('border-airbnb', genreFilterOpen);
+    }
+    if (genreFilterOpen) renderGenreFilter();
+}
+
+function buildGenreRow([genre]) {
+    const checked = selectedGenres.has(genre);
+    const label = escapeHtml(currentLang === 'ru' ? (translateGenre(genre) || genre) : genre);
+    const safeGenre = genre.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `<label class="flex items-center gap-2 py-1 cursor-pointer select-none group">
+        <input type="checkbox" class="w-4 h-4 rounded cursor-pointer flex-shrink-0"
+               style="accent-color:#FF5A5F"
+               onchange="toggleGenre('${safeGenre}')" ${checked ? 'checked' : ''}>
+        <span class="text-sm text-gray-800 dark:text-gray-200 group-hover:text-airbnb transition-colors leading-snug">${label}</span>
+    </label>`;
+}
+
+function getFilteredSorted() {
+    const counts = getGenreCounts();
+    let sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    if (genreSearchQ) {
+        sorted = sorted.filter(([g]) =>
+            (translateGenre(g) || g).toLowerCase().includes(genreSearchQ) ||
+            g.toLowerCase().includes(genreSearchQ)
+        );
+    }
+    return sorted;
+}
+
+// Обновляет только список чекбоксов — не трогает input (курсор не сбрасывается)
+function renderGenreFilterList() {
+    const listEl = document.getElementById('genre-filter-list');
+    const headerEl = document.getElementById('genre-filter-header');
+    if (!listEl) return;
+
+    const sorted = getFilteredSorted();
+    const top = sorted.slice(0, 12);
+    const rest = sorted.slice(12);
+
+    if (headerEl) {
+        headerEl.innerHTML = `<span class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Метки</span>
+            ${selectedGenres.size ? `<button onclick="clearGenres()" class="text-xs text-airbnb hover:underline">Сбросить (${selectedGenres.size})</button>` : ''}`;
+    }
+
+    listEl.innerHTML = `
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-x-6">
+            ${top.map(buildGenreRow).join('')}
+        </div>
+        ${rest.length ? `<details class="mt-2">
+            <summary class="text-xs text-airbnb cursor-pointer select-none py-1 list-none hover:underline">Показать ещё ${rest.length}...</summary>
+            <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-x-6 mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                ${rest.map(buildGenreRow).join('')}
+            </div>
+        </details>` : ''}`;
+}
+
+// Полный рендер панели (первый показ или toggleGenrePanel)
+function renderGenreFilter() {
+    const container = document.getElementById('genre-filter-panel');
+    if (!container || container.classList.contains('hidden')) return;
+
+    const sorted = getFilteredSorted();
+    if (!sorted.length && !genreSearchQ) {
+        container.innerHTML = `<p class="text-sm text-gray-400 py-1 px-1">Загрузка жанров...</p>`;
+        return;
+    }
+
+    // Строим скелет один раз — input живёт постоянно
+    if (!document.getElementById('genre-filter-list')) {
+        container.innerHTML = `
+            <div id="genre-filter-header" class="flex items-center justify-between mb-3"></div>
+            <div id="genre-filter-list"></div>
+            <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                <input type="text" id="genre-search-input" placeholder="Найти другие метки"
+                       oninput="filterGenreSearch(this.value)"
+                       class="w-full max-w-xs px-3 py-1.5 text-sm bg-gray-100 dark:bg-[#2a2a2a] rounded-xl outline-none placeholder-gray-400 text-gray-700 dark:text-gray-200"
+                       style="border:1px solid #d1d5db;">
+            </div>`;
+    }
+    renderGenreFilterList();
+}
+
 // ─── Render anime cards ───────────────────────────────────────────────────────
 
-function renderAnimeCards(items, emptyMessage = 'Ничего не найдено...') {
+function renderAnimeCards(items, emptyMessage = '') {
     if (!items.length) {
-        return `<div class="col-span-full text-center py-20 text-gray-500 dark:text-gray-400">${emptyMessage}</div>`;
+        return `<div class="col-span-full text-center py-20 text-gray-500 dark:text-gray-400">${emptyMessage || t('nothing_found')}</div>`;
     }
 
     return items.map(anime => {
@@ -737,11 +1038,11 @@ function renderAnimeCards(items, emptyMessage = 'Ничего не найден�
                      class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                      loading="lazy">
                 <div class="absolute top-3 left-3 flex flex-wrap gap-2">
-                    ${anime.tags.slice(0, 1).map(tag => `<span class="px-2 py-1 bg-white/90 dark:bg-black/70 backdrop-blur-sm text-[11px] font-semibold rounded-md">${escapeHtml(tag)}</span>`).join('')}
+                    ${anime.tags.slice(0, 1).map(tag => `<span class="px-2 py-1 bg-white/90 dark:bg-black/70 backdrop-blur-sm text-[11px] font-semibold rounded-md">${escapeHtml(currentLang === 'ru' ? translateGenre(tag) : tag)}</span>`).join('')}
                 </div>
                 <button onclick="event.stopPropagation(); toggleFavorite(${anime.id})"
                         data-fav-id="${anime.id}"
-                        title="${fav ? 'Убрать из избранного' : 'В избранное'}"
+                        title="${fav ? t('remove_from_fav') : t('add_to_fav')}"
                         class="heart-btn absolute top-3 right-3 p-1.5 rounded-full bg-white/90 dark:bg-black/70 backdrop-blur-sm">
                     <i data-lucide="heart" class="w-4 h-4 ${fav ? 'fill-current text-airbnb' : 'text-gray-500 dark:text-gray-400'}"></i>
                 </button>
@@ -749,7 +1050,7 @@ function renderAnimeCards(items, emptyMessage = 'Ничего не найден�
             <div class="flex justify-between items-start gap-2">
                 <div>
                     <h3 class="font-medium text-gray-900 dark:text-white line-clamp-1">${escapeHtml(anime.displayTitle)}</h3>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">${anime.episodes || '?'} эпизодов</p>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">${t('episodes_count', anime.episodes || '?')}</p>
                 </div>
                 <div class="flex items-center gap-1 text-sm font-medium shrink-0">
                     <i data-lucide="star" class="w-4 h-4 fill-current text-yellow-400"></i>
@@ -768,14 +1069,14 @@ function updateCatalogMeta() {
     if (!subtitle || !description) return;
 
     if (currentCatalogMode === 'search' && currentCatalogQuery) {
-        subtitle.innerText = `Найдено по запросу: ${currentCatalogQuery}`;
-        description.innerText = 'Результаты поиска, ниже — рекомендации';
+        subtitle.innerText = t('search_found_label', currentCatalogQuery);
+        description.innerText = t('search_results_sub');
         return;
     }
 
-    const sortLabels = { default: 'Популярное сейчас', rating: 'По рейтингу', title: 'По названию А-Я' };
-    subtitle.innerText = sortLabels[currentSortMode] || 'Популярное сейчас';
-    description.innerText = 'Подборка аниме из базы MyAnimeList';
+    const sortLabels = { default: t('popular_now_label'), rating: t('by_rating_label'), title: t('by_title_label') };
+    subtitle.innerText = sortLabels[currentSortMode] || t('popular_now_label');
+    description.innerText = t('catalog_desc');
 }
 
 // ─── Search inputs ────────────────────────────────────────────────────────────
@@ -814,7 +1115,7 @@ function renderRecommendations() {
     }
 
     section.classList.remove('hidden');
-    grid.innerHTML = renderAnimeCards(sortAnimeList(recommendedAnime), 'Пока нет рекомендаций.');
+    grid.innerHTML = renderAnimeCards(sortAnimeList(recommendedAnime), t('no_recommendations'));
 }
 
 async function fetchRecommendations(excludedAnime = []) {
@@ -869,12 +1170,10 @@ function renderCatalogActions() {
         return;
     }
 
-    const sourceLabel = currentCatalogMode === 'search'
-        ? 'Результаты из базы MyAnimeList'
-        : 'Каталог из базы MyAnimeList';
+    const sourceLabel = currentCatalogMode === 'search' ? t('source_search') : t('source_top');
 
     if (!hasMoreAnime) {
-        actions.innerHTML = `<div class="text-center text-sm text-gray-500 dark:text-gray-400">${sourceLabel}. Больше результатов нет.</div>`;
+        actions.innerHTML = `<div class="text-center text-sm text-gray-500 dark:text-gray-400">${sourceLabel}. ${t('no_more')}</div>`;
         observeCatalogSentinel();
         return;
     }
@@ -882,7 +1181,7 @@ function renderCatalogActions() {
     actions.innerHTML = `
         <div id="catalog-load-sentinel" class="flex flex-col items-center gap-3 min-h-[56px]">
             <div class="text-sm font-medium text-gray-500 dark:text-gray-400">
-                ${isLoadingMore ? 'Загружаем ещё аниме...' : 'Листай ниже, новые аниме загрузятся автоматически'}
+                ${isLoadingMore ? t('load_more_loading') : t('load_more_scroll')}
             </div>
             <div class="w-8 h-8 rounded-full border-2 border-airbnb/30 border-t-airbnb ${isLoadingMore ? 'animate-spin' : ''}"></div>
             <div class="text-sm text-gray-500 dark:text-gray-400">${sourceLabel}</div>
@@ -1000,7 +1299,7 @@ async function handleSearch({ scrollToResults = false, source = '' } = {}) {
         currentCatalogPage = 1;
         hasMoreAnime = true;
         recommendedAnime = [];
-        if (subtitle) subtitle.innerText = 'Популярное сейчас';
+        if (subtitle) subtitle.innerText = t('popular_now');
         isSearching = false;
         setCatalogLoadingState(false);
         fetchTopAnime({ page: 1, append: false });
@@ -1011,7 +1310,7 @@ async function handleSearch({ scrollToResults = false, source = '' } = {}) {
         latestSearchToken++;
         latestRecommendationToken++;
         recommendedAnime = [];
-        if (subtitle) subtitle.innerText = 'Введите хотя бы 2 символа';
+        if (subtitle) subtitle.innerText = t('search_min_chars');
         isSearching = false;
         setCatalogLoadingState(false);
         renderRecommendations();
@@ -1019,7 +1318,7 @@ async function handleSearch({ scrollToResults = false, source = '' } = {}) {
     }
 
     isSearching = true;
-    if (subtitle) subtitle.innerText = `Ищем: ${query}`;
+    if (subtitle) subtitle.innerText = t('searching_label', query);
     setCatalogLoadingState(true);
 
     if (scrollToResults) scrollToCatalogIfNeeded();
@@ -1042,12 +1341,12 @@ async function handleSearch({ scrollToResults = false, source = '' } = {}) {
         currentCatalogQuery = query;
         currentCatalogPage = 1;
         hasMoreAnime = result.hasNextPage;
-        if (subtitle) subtitle.innerText = query ? `Результаты поиска: ${query}` : 'Популярное сейчас';
+        if (subtitle) subtitle.innerText = query ? t('search_results_label', query) : t('popular_now');
         fetchRecommendations(result.items);
     } catch (error) {
         if (error.name === 'AbortError') return;
         console.error('Search error:', error);
-        if (subtitle) subtitle.innerText = 'Не удалось выполнить поиск';
+        if (subtitle) subtitle.innerText = t('search_error');
     } finally {
         if (searchToken === latestSearchToken) {
             isSearching = false;
@@ -1165,8 +1464,15 @@ async function fetchEpisodes(anime) {
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
 
+function stopActivePlayer() {
+    const viewport = document.getElementById('player-viewport');
+    if (viewport) viewport.innerHTML = '';
+}
+
 function showSection(sectionId, { preserveScroll = false } = {}) {
     if (sectionId === 'admin') { openAdminModal(); return; }
+    // Stop video/audio when leaving the watch section
+    if (currentSection === 'watch' && sectionId !== 'watch') stopActivePlayer();
     if (sectionId !== 'watch') clearAnimeUrl();
 
     document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
@@ -1179,11 +1485,13 @@ function showSection(sectionId, { preserveScroll = false } = {}) {
     updateMobileNavActive(sectionId);
 
     if (sectionId === 'catalog') {
-        const catalogContainer = document.getElementById('catalog-container');
-        if (catalogContainer) {
-            const y = catalogContainer.getBoundingClientRect().top + window.scrollY - 100;
-            window.scrollTo({ top: y, behavior: 'smooth' });
-        }
+        setTimeout(() => {
+            const target = document.getElementById('catalog-subtitle') || document.getElementById('catalog-container');
+            if (target) {
+                const y = target.getBoundingClientRect().top + window.scrollY - 90;
+                window.scrollTo({ top: y, behavior: 'smooth' });
+            }
+        }, 30);
     } else if (!preserveScroll) {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -1201,7 +1509,8 @@ function showSection(sectionId, { preserveScroll = false } = {}) {
 function renderCatalog() {
     const grid = document.getElementById('anime-grid');
     if (!grid) return;
-    grid.innerHTML = renderAnimeCards(sortAnimeList(animeData));
+    renderGenreFilter();
+    grid.innerHTML = renderAnimeCards(filterByGenres(sortAnimeList(animeData)));
     updateCatalogMeta();
     renderRecommendations();
     lucide.createIcons();
@@ -1212,6 +1521,7 @@ function renderCatalog() {
 // ─── Watch ────────────────────────────────────────────────────────────────────
 
 async function watchAnime(id) {
+    const token = ++watchToken;
     currentAnime = findAnimeById(id);
     if (!currentAnime) return;
     currentEpisodeNum = 1;
@@ -1225,20 +1535,26 @@ async function watchAnime(id) {
 
     await Promise.all([
         fetchEpisodes(currentAnime),
-        fetchAnilistId(currentAnime.malId).then(id => { if (id) currentAnime.anilistId = id; }),
+        fetchAnilistId(currentAnime.malId).then(aid => { if (aid && token === watchToken) currentAnime.anilistId = aid; }),
         fetchKodikData(currentAnime.malId).then(d => {
+            if (token !== watchToken) return;
             currentKodikTranslations = d.translations;
             currentKodikEpisodeNums = d.episodes;
         })
     ]);
+
+    if (token !== watchToken) return;
     renderPlayerUI(currentAnime);
 
     if (TRANSLATE_TO && !synopsisCache[currentAnime.id]) {
         const synopsisEl = document.getElementById('anime-synopsis');
         if (synopsisEl) synopsisEl.classList.add('synopsis-loading');
-        const translated = await translateSynopsis(currentAnime.synopsis, currentAnime.id);
-        if (translated !== currentAnime.synopsis) {
-            currentAnime.synopsis = translated;
+        const src = currentAnime.synopsisEn || currentAnime.synopsis;
+        const translated = await translateSynopsis(src, currentAnime.id);
+        if (token !== watchToken) return;
+        if (translated !== src) {
+            // Кешируем, НЕ перезаписываем synopsisEn/synopsis
+            synopsisCache[currentAnime.id] = translated;
             const el = document.getElementById('anime-synopsis');
             if (el) { el.textContent = translated; el.classList.remove('synopsis-loading'); }
         }
@@ -1260,22 +1576,22 @@ function renderPlayerUI(anime) {
                 <div class="relative z-10 h-full p-5 md:p-10 flex flex-col md:flex-row items-start md:items-end justify-between gap-4 md:gap-8 min-h-[200px] md:min-h-[320px]">
                     <div class="max-w-2xl space-y-5">
                         <div class="flex flex-wrap gap-2">
-                            <span class="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-white text-sm font-semibold">Рейтинг ${anime.rating || 'N/A'}</span>
-                            <span class="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-white text-sm font-semibold">${anime.episodes || '?'} эп.</span>
+                            <span class="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-white text-sm font-semibold">${t('rating_badge', anime.rating || 'N/A')}</span>
+                            <span class="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-white text-sm font-semibold">${t('ep_badge', anime.episodes || '?')}</span>
                             <span class="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-white text-sm font-semibold">${anime.status}</span>
                             ${anime.year ? `<span class="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-white text-sm font-semibold">${anime.year}</span>` : ''}
                             <button onclick="toggleFavorite(${anime.id})" data-fav-id="${anime.id}"
                                 class="heart-btn px-3 py-1 rounded-full backdrop-blur-md text-sm font-semibold flex items-center gap-1.5 transition-colors ${fav ? 'bg-airbnb/90 text-white' : 'bg-white/15 text-white hover:bg-white/25'}">
                                 <i data-lucide="heart" class="w-3.5 h-3.5 ${fav ? 'fill-current' : ''}"></i>
-                                ${fav ? 'В избранном' : 'В избранное'}
+                                ${fav ? t('in_favorites') : t('to_favorites')}
                             </button>
                         </div>
                         <div>
                             <h2 class="text-2xl md:text-5xl font-bold tracking-tight text-white">${escapeHtml(anime.displayTitle)}</h2>
-                            <p id="anime-synopsis" class="text-white/80 text-sm md:text-base mt-2 md:mt-3 max-w-2xl line-clamp-3 md:line-clamp-none">${anime.synopsis}</p>
+                            <p id="anime-synopsis" class="text-white/80 text-sm md:text-base mt-2 md:mt-3 max-w-2xl line-clamp-3 md:line-clamp-none">${currentLang === 'ru' && synopsisCache[anime.id] ? synopsisCache[anime.id] : (anime.synopsisEn || anime.synopsis)}</p>
                         </div>
                         <div class="flex flex-wrap gap-2">
-                            ${anime.tags.slice(0, 4).map(tag => `<span class="px-3 py-1 rounded-full bg-airbnb/90 text-white text-xs font-bold tracking-wide">${escapeHtml(tag)}</span>`).join('')}
+                            ${anime.tags.slice(0, 4).map(tag => `<span class="px-3 py-1 rounded-full bg-airbnb/90 text-white text-xs font-bold tracking-wide">${escapeHtml(currentLang === 'ru' ? translateGenre(tag) : tag)}</span>`).join('')}
                         </div>
                     </div>
                     <div class="hidden md:block w-44 shrink-0">
@@ -1289,6 +1605,7 @@ function renderPlayerUI(anime) {
             <div class="space-y-4">
                 ${(() => {
                     const player = AUTO_SERVERS[currentServerIndex];
+                    const isKodik = player.type === 'kodik';
                     const showDropdowns = !player.builtinSelection;
                     const epNums = currentKodikEpisodeNums.length
                         ? currentKodikEpisodeNums
@@ -1296,11 +1613,17 @@ function renderPlayerUI(anime) {
                     const selectCls = 'px-3 py-2 rounded-xl border border-subtle bg-white dark:bg-[#1e1e1e] text-sm font-semibold text-gray-900 dark:text-white outline-none focus:border-airbnb cursor-pointer transition-colors';
                     return `
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <h2 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">Просмотр</h2>
+                    <h2 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">${t('watching')}</h2>
                     <div id="player-dropdowns" class="flex flex-wrap gap-2 items-center${showDropdowns ? '' : ' hidden'}">
+                        ${isKodik && currentKodikTranslations.length > 1 ? `
+                        <select id="kodik-voice-select" onchange="selectVoice(+this.value)" class="${selectCls}">
+                            ${currentKodikTranslations.map((tr, i) =>
+                                `<option value="${i}" ${i === currentKodikTranslationIdx ? 'selected' : ''}>${escapeHtml(tr.title)}</option>`
+                            ).join('')}
+                        </select>` : ''}
                         <select id="episode-select" onchange="selectEpisode(+this.value)" class="${selectCls}">
                             ${epNums.map(n =>
-                                `<option value="${n}" ${n === currentEpisodeNum ? 'selected' : ''}>Серия ${n}</option>`
+                                `<option value="${n}" ${n === currentEpisodeNum ? 'selected' : ''}>${t('episode_select', n)}</option>`
                             ).join('')}
                         </select>
                     </div>
@@ -1323,7 +1646,7 @@ function renderPlayerUI(anime) {
                     <a id="open-in-browser" href="#" target="_blank" rel="noopener"
                         class="ml-auto px-4 py-2 border border-subtle text-gray-500 dark:text-gray-400 hover:text-airbnb rounded-xl font-bold text-xs transition-colors flex items-center gap-1.5">
                         <i data-lucide="external-link" class="w-3 h-3"></i>
-                        В браузере
+                        ${t('open_in_browser')}
                     </a>
                 </div>
             </div>
@@ -1335,6 +1658,7 @@ function renderPlayerUI(anime) {
     `;
     lucide.createIcons();
     setupVideoListeners();
+    if (AUTO_SERVERS[currentServerIndex]?.type === 'kodik') initKodikPlayer();
 }
 
 // ─── Player helpers ───────────────────────────────────────────────────────────
@@ -1343,17 +1667,75 @@ function renderCurrentPlayer() {
     const player = AUTO_SERVERS[currentServerIndex] || AUTO_SERVERS[0];
     if (player.type === 'kodik') {
         if (!currentKodikTranslations.length) {
-            return `<div class="w-full h-full bg-[#0e0e0e] flex items-center justify-center text-white p-8 text-center">
-                <div class="space-y-3">
-                    <i data-lucide="tv-off" class="w-10 h-10 mx-auto text-gray-600"></i>
-                    <p class="font-bold">Kodik недоступен</p>
-                    <p class="text-sm text-gray-500">Русская озвучка не найдена для этого аниме.<br>Попробуй Megaplay.</p>
-                </div>
-            </div>`;
+            // Нет озвучки в Kodik — используем find-player как запасной вариант
+            return buildIframe(buildKodikFindPlayerUrl(currentAnime.malId, currentEpisodeNum, null));
         }
+        // Прямая ссылка на embed Kodik (как в оригинале — работает)
         return buildIframe(currentKodikTranslations[currentKodikTranslationIdx].link);
     }
     return buildIframe(player.url(currentAnime.malId, currentEpisodeNum));
+}
+
+// ─── Kodik direct video extraction (ad-free) ──────────────────────────────────
+
+function parseKodikLink(link) {
+    const url = link.startsWith('//') ? 'https:' + link : link;
+    const m = url.match(/kodikplayer\.com\/(seria|serial|video|anime-serial|anime)\/(\d+)\/([a-zA-Z0-9]+)\//i);
+    return m ? { type: m[1], id: m[2], hash: m[3] } : null;
+}
+
+function decodeKodikUrl(encoded) {
+    // Method 1: atob(encoded) is reversed URL
+    try {
+        const v = atob(encoded).split('').reverse().join('');
+        if (/\/\/.+\.(m3u8|mp4)/.test(v)) return v.startsWith('//') ? 'https:' + v : v;
+    } catch (_) {}
+    // Method 2: encoded is reversed base64 string
+    try {
+        const v = atob(encoded.split('').reverse().join(''));
+        if (/\/\/.+\.(m3u8|mp4)/.test(v)) return v.startsWith('//') ? 'https:' + v : v;
+    } catch (_) {}
+    return null;
+}
+
+async function getKodikDirectUrl(link) {
+    const params = parseKodikLink(link);
+    if (!params) return null;
+    try {
+        const body = new URLSearchParams({
+            ...params,
+            token: KODIK_TOKEN,
+            d: location.hostname || 'localhost',
+            pd: location.hostname || 'localhost',
+            ref: location.href,
+        });
+        const res = await fetch('https://kodik.info/gvi', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body
+        });
+        if (!res.ok) return null;
+        const data = await res.json();
+        for (const q of ['720p', '480p', '360p', '1080p']) {
+            const src = data.links?.[q]?.[0]?.src;
+            if (src) return decodeKodikUrl(src);
+        }
+    } catch (_) {}
+    return null;
+}
+
+function buildHlsPlayer(src) {
+    return `<video id="kodik-video" class="w-full h-full bg-black" controls autoplay playsinline></video>`;
+}
+
+function buildKodikFindPlayerUrl(malId, ep, translationId) {
+    let url = `https://kodik.info/find-player?token=${KODIK_TOKEN}&shikimori_id=${malId}&with_episodes=true&episode=${ep}`;
+    if (translationId) url += `&translation_id=${translationId}`;
+    return url;
+}
+
+function initKodikPlayer() {
+    // Логика переехала в renderCurrentPlayer — прямой iframe без async
 }
 
 function buildIframe(src) {
@@ -1362,14 +1744,14 @@ function buildIframe(src) {
         <!-- Сообщение при сбое (показывается через 8 сек если iframe не загрузился) -->
         <div id="player-error" class="absolute inset-0 z-10 hidden flex-col items-center justify-center gap-4 bg-[#0e0e0e] text-white text-center px-6">
             <i data-lucide="wifi-off" class="w-10 h-10 text-gray-500"></i>
-            <p class="font-semibold">Плеер не загрузился</p>
-            <p class="text-sm text-gray-400">Попробуй другой сервер или открой напрямую</p>
+            <p class="font-semibold">${t('player_error_title')}</p>
+            <p class="text-sm text-gray-400">${t('player_error_sub')}</p>
             <div class="flex gap-3 flex-wrap justify-center mt-2">
                 <button onclick="nextServer()" class="px-4 py-2 bg-airbnb text-white rounded-xl text-sm font-semibold hover:bg-airbnbDark transition-colors">
-                    Следующий сервер
+                    ${t('next_server')}
                 </button>
                 <a href="${src}" target="_blank" rel="noopener" class="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-semibold hover:bg-white/20 transition-colors">
-                    Открыть в браузере
+                    ${t('open_browser_btn')}
                 </a>
             </div>
         </div>
@@ -1407,6 +1789,7 @@ function setServer(idx) {
     if (viewport) viewport.innerHTML = renderCurrentPlayer();
     updateServerButtons();
     lucide.createIcons();
+    if (AUTO_SERVERS[idx]?.type === 'kodik') initKodikPlayer();
 }
 
 function updateServerButtons() {
@@ -1439,6 +1822,7 @@ function selectEpisode(num) {
     if (viewport) viewport.innerHTML = renderCurrentPlayer();
     updateServerButtons();
     lucide.createIcons();
+    if (AUTO_SERVERS[currentServerIndex]?.type === 'kodik') initKodikPlayer();
 }
 
 function selectVoice(idx) {
@@ -1447,6 +1831,7 @@ function selectVoice(idx) {
     const viewport = document.getElementById('player-viewport');
     if (viewport) viewport.innerHTML = renderCurrentPlayer();
     updateServerButtons();
+    initKodikPlayer();
 }
 
 function selectPlayerVoice(idx) {
@@ -1462,9 +1847,7 @@ document.addEventListener('click', (e) => {
     if (e.target.closest('#player-viewport')) window._playerInteracted = true;
 });
 
-function setupVideoListeners() {
-    console.log('Iframe player initialized');
-}
+function setupVideoListeners() {}
 
 
 // ─── Dark mode ────────────────────────────────────────────────────────────────
@@ -1700,7 +2083,7 @@ function showAdminDataStatus(msg) {
 
 // ─── URL Routing ─────────────────────────────────────────────────────────────
 
-const USE_HASH = location.protocol === 'file:';
+const USE_HASH = true; // static server — always hash-based so refresh works
 
 function updateAnimeUrl(malId) {
     const padded = String(malId).padStart(9, '0');
@@ -1740,7 +2123,7 @@ async function fetchAndWatchByMalId(malId) {
     if (container) container.innerHTML = `
         <div class="flex flex-col items-center justify-center h-64 gap-4">
             <div class="w-10 h-10 border-4 border-airbnb border-t-transparent rounded-full animate-spin"></div>
-            <p class="text-sm text-gray-500 dark:text-gray-400">Загрузка аниме...</p>
+            <p class="text-sm text-gray-500 dark:text-gray-400">${t('anime_loading')}</p>
         </div>`;
 
     try {
@@ -1773,6 +2156,7 @@ loadSession();
 updateAuthUI();
 switchAuthMode('login');
 updateLangToggle();
+renderTranslations();
 setupInfiniteCatalogLoading();
 
 // Проверяем URL при загрузке страницы
