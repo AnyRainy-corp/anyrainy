@@ -71,6 +71,7 @@ const STRINGS = {
         search_label: 'Поиск', search_placeholder: 'Название аниме...',
         nav_search_placeholder: 'Найти аниме...', mobile_search_placeholder: 'Найти аниме...',
         mobile_search_hint: 'Введи название и нажми', mobile_search_hint_btn: 'Поиск',
+        genres_btn: 'Жанры',
         sort_label: 'Сортировка', sort_default: 'По умолчанию', sort_rating: 'По рейтингу', sort_title: 'По названию',
         popular_now: 'Популярное сейчас', catalog_desc: 'Подборка аниме из базы MyAnimeList',
         recommendations_title: 'Можно ещё посмотреть', recommendations_desc: 'Несколько рекомендаций, если нужный тайтл не подошёл',
@@ -123,6 +124,7 @@ const STRINGS = {
         search_label: 'Search', search_placeholder: 'Anime title...',
         nav_search_placeholder: 'Find anime...', mobile_search_placeholder: 'Find anime...',
         mobile_search_hint: 'Type a title and press', mobile_search_hint_btn: 'Search',
+        genres_btn: 'Genres',
         sort_label: 'Sort', sort_default: 'Default', sort_rating: 'By rating', sort_title: 'By title',
         popular_now: 'Popular now', catalog_desc: 'Anime collection from MyAnimeList',
         recommendations_title: 'You might also like', recommendations_desc: 'A few recommendations if the title wasn\'t right',
@@ -309,13 +311,34 @@ function saveProfileData(data) {
 function uploadAvatar(event) {
     const file = event.target.files?.[0];
     if (!file) return;
+    event.target.value = '';
+    if (file.size > 5 * 1024 * 1024) {
+        if (currentLang === 'ru') {
+            alert('Файл слишком большой. Максимальный размер — 5 МБ.');
+        } else {
+            alert('File is too large. Maximum size — 5 MB.');
+        }
+        return;
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
-        saveProfileData({ avatar: e.target.result });
-        updateAuthUI();
+        const img = new Image();
+        img.onload = () => {
+            const SIZE = 256;
+            const canvas = document.createElement('canvas');
+            canvas.width = SIZE; canvas.height = SIZE;
+            const ctx = canvas.getContext('2d');
+            // Обрезаем по центру (crop square)
+            const min = Math.min(img.width, img.height);
+            const sx = (img.width - min) / 2;
+            const sy = (img.height - min) / 2;
+            ctx.drawImage(img, sx, sy, min, min, 0, 0, SIZE, SIZE);
+            saveProfileData({ avatar: canvas.toDataURL('image/jpeg', 0.85) });
+            updateAuthUI();
+        };
+        img.src = e.target.result;
     };
     reader.readAsDataURL(file);
-    event.target.value = '';
 }
 
 function saveBio() {
