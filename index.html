@@ -16,6 +16,7 @@
     <meta name="twitter:title" content="AnyRainy — аниме онлайн">
     <meta name="twitter:description" content="Смотрите лучшие аниме-сериалы онлайн.">
     <meta name="twitter:image" content="https://images.unsplash.com/photo-1578632767115-351597cf2477?auto=format&fit=crop&q=80&w=1200&h=630">
+    <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -278,16 +279,45 @@
                     <button id="auth-tab-register" onclick="switchAuthMode('register')" class="px-4 py-3 rounded-xl text-sm font-semibold text-gray-500 dark:text-gray-300" data-i18n="auth_tab_register">Регистрация</button>
                 </div>
                 <form id="auth-form" class="space-y-4" onsubmit="submitAuthForm(event)">
+                    <!-- Логин или имя пользователя -->
                     <div class="space-y-2">
-                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300" data-i18n="username_label">Имя пользователя</label>
-                        <input id="auth-username" type="text" required data-i18n-placeholder="username_placeholder" class="w-full px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none" placeholder="Например, Sora">
+                        <label id="username-field-label" class="text-sm font-medium text-gray-700 dark:text-gray-300">Логин или email</label>
+                        <input id="auth-username" type="text" autocomplete="username"
+                            class="w-full px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none" placeholder="Логин или email">
                     </div>
+                    <!-- Email + кнопка Подтвердить (только регистрация) -->
+                    <div id="email-row" class="hidden space-y-2">
+                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
+                        <div class="flex gap-2">
+                            <input id="auth-email" type="email" autocomplete="email"
+                                class="flex-1 min-w-0 px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none text-sm" placeholder="example@mail.com">
+                            <button type="button" id="verify-email-btn" onclick="requestEmailVerification()"
+                                class="shrink-0 px-3 py-2.5 bg-airbnb text-white rounded-xl text-sm font-semibold hover:bg-airbnbDark transition-colors">Подтвердить</button>
+                        </div>
+                        <!-- Поле кода (появляется после нажатия Подтвердить) -->
+                        <div id="email-code-row" class="hidden flex gap-2 mt-1">
+                            <input id="auth-email-code" type="text" maxlength="6" inputmode="numeric"
+                                class="flex-1 min-w-0 px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none font-mono tracking-[0.5em] text-center" placeholder="000000">
+                            <button type="button" onclick="verifyEmailCode()"
+                                class="shrink-0 px-3 py-2.5 bg-gray-800 dark:bg-white dark:text-black text-white rounded-xl text-sm font-semibold hover:opacity-80 transition-opacity">Проверить</button>
+                        </div>
+                        <p id="email-verified-msg" class="hidden text-sm text-green-500 flex items-center gap-1.5">
+                            <i data-lucide="check-circle-2" class="w-4 h-4"></i>&nbsp;Email подтверждён
+                        </p>
+                        <p id="email-verify-error" class="hidden text-sm text-red-500"></p>
+                    </div>
+                    <!-- Пароль -->
                     <div class="space-y-2">
-                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300" data-i18n="password_label">Пароль</label>
-                        <input id="auth-password" type="password" required data-i18n-placeholder="password_placeholder" class="w-full px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none" placeholder="Минимум 4 символа">
+                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Пароль</label>
+                        <input id="auth-password" type="password" autocomplete="current-password"
+                            class="w-full px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none" placeholder="Минимум 4 символа">
                     </div>
-                    <p id="auth-status" class="text-sm text-gray-500 dark:text-gray-400" data-i18n="auth_status_default">Войди или создай аккаунт, чтобы писать комментарии.</p>
-                    <button type="submit" class="w-full bg-airbnb hover:bg-airbnbDark text-white py-3 rounded-xl font-bold transition-colors" data-i18n="auth_submit">Продолжить</button>
+                    <!-- Забыли пароль (только вход) -->
+                    <div id="forgot-link-row" class="text-right -mt-1">
+                        <button type="button" onclick="showForgotPassword()" class="text-xs text-airbnb hover:underline">Забыли пароль?</button>
+                    </div>
+                    <p id="auth-status" class="text-sm text-gray-500 dark:text-gray-400">Войди или создай аккаунт, чтобы писать комментарии.</p>
+                    <button type="submit" class="w-full bg-airbnb hover:bg-airbnbDark text-white py-3 rounded-xl font-bold transition-colors">Продолжить</button>
                 </form>
 
                 <!-- Logged in: profile panel -->
@@ -326,6 +356,40 @@
                     </button>
                     <!-- Logout -->
                     <button onclick="logout()" class="w-full bg-gray-900 dark:bg-white dark:text-black text-white py-3 rounded-xl font-bold transition-colors" data-i18n="logout">Выйти</button>
+                </div>
+
+                <!-- Восстановление пароля -->
+                <div id="forgot-password-panel" class="hidden space-y-4">
+                    <button type="button" onclick="backToLogin()" class="flex items-center gap-1.5 text-sm text-gray-500 hover:text-airbnb transition-colors">
+                        <i data-lucide="arrow-left" class="w-4 h-4"></i> Назад ко входу
+                    </button>
+                    <p class="font-semibold text-gray-800 dark:text-white text-sm">Восстановление пароля</p>
+                    <div class="space-y-2">
+                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Email от аккаунта</label>
+                        <div class="flex gap-2">
+                            <input id="reset-email-input" type="email"
+                                class="flex-1 min-w-0 px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none text-sm" placeholder="example@mail.com">
+                            <button type="button" id="reset-send-btn" onclick="sendResetCode()"
+                                class="shrink-0 px-3 py-2.5 bg-airbnb text-white rounded-xl text-sm font-semibold hover:bg-airbnbDark transition-colors whitespace-nowrap">Отправить код</button>
+                        </div>
+                    </div>
+                    <div id="reset-code-row" class="hidden space-y-2">
+                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Код из письма</label>
+                        <div class="flex gap-2">
+                            <input id="reset-code-input" type="text" maxlength="6" inputmode="numeric"
+                                class="flex-1 min-w-0 px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none font-mono tracking-[0.5em] text-center" placeholder="000000">
+                            <button type="button" onclick="submitResetCode()"
+                                class="shrink-0 px-3 py-2.5 bg-gray-800 dark:bg-white dark:text-black text-white rounded-xl text-sm font-semibold hover:opacity-80 transition-opacity">Проверить</button>
+                        </div>
+                    </div>
+                    <div id="reset-newpass-row" class="hidden space-y-2">
+                        <label class="text-sm font-medium text-gray-700 dark:text-gray-300">Новый пароль</label>
+                        <input id="reset-new-password" type="password"
+                            class="w-full px-4 py-3 rounded-xl border border-subtle bg-white dark:bg-[#2a2a2a] dark:text-white outline-none" placeholder="Минимум 4 символа">
+                        <button type="button" onclick="submitPasswordReset()"
+                            class="w-full bg-airbnb hover:bg-airbnbDark text-white py-3 rounded-xl font-bold transition-colors">Сохранить пароль</button>
+                    </div>
+                    <p id="reset-status" class="text-sm text-gray-500 dark:text-gray-400">Введи email, на который зарегистрирован аккаунт.</p>
                 </div>
 
                 <!-- Admin panel secret access -->

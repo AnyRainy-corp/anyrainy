@@ -491,22 +491,40 @@ function updateAuthUI() {
 
 function switchAuthMode(mode) {
     authMode = mode;
+    const isLogin = mode === 'login';
 
     const loginTab = document.getElementById('auth-tab-login');
     const registerTab = document.getElementById('auth-tab-register');
-    const formButton = document.querySelector('#auth-form button[type="submit"]');
     const status = document.getElementById('auth-status');
+    const emailRow = document.getElementById('email-row');
+    const forgotRow = document.getElementById('forgot-link-row');
+    const usernameLabel = document.getElementById('username-field-label');
+    const usernameInput = document.getElementById('auth-username');
 
-    if (loginTab && registerTab) {
-        const loginActive = mode === 'login';
-        loginTab.className = `px-4 py-3 rounded-xl text-sm font-semibold ${loginActive ? 'bg-white dark:bg-[#1e1e1e] text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-300'}`;
-        registerTab.className = `px-4 py-3 rounded-xl text-sm font-semibold ${!loginActive ? 'bg-white dark:bg-[#1e1e1e] text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-300'}`;
-    }
+    if (loginTab) loginTab.className = `px-4 py-3 rounded-xl text-sm font-semibold ${isLogin ? 'bg-white dark:bg-[#1e1e1e] text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-300'}`;
+    if (registerTab) registerTab.className = `px-4 py-3 rounded-xl text-sm font-semibold ${!isLogin ? 'bg-white dark:bg-[#1e1e1e] text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-300'}`;
 
-    if (formButton) formButton.textContent = t('auth_submit');
+    if (emailRow) emailRow.classList.toggle('hidden', isLogin);
+    if (forgotRow) forgotRow.classList.toggle('hidden', !isLogin);
+    if (usernameLabel) usernameLabel.textContent = isLogin ? 'Логин или email' : 'Имя пользователя';
+    if (usernameInput) usernameInput.placeholder = isLogin ? 'Логин или email' : 'Например, Sora';
 
     if (status && !currentUser) {
-        status.textContent = mode === 'login' ? t('auth_status_login') : t('auth_status_register');
+        status.textContent = isLogin ? t('auth_status_login') : t('auth_status_register');
+    }
+
+    // Сбрасываем email verification при переключении на register
+    if (!isLogin) {
+        emailVerified = false; emailVerifyCode = null; emailVerifyTarget = null;
+        document.getElementById('email-verified-msg')?.classList.add('hidden');
+        document.getElementById('email-verify-error')?.classList.add('hidden');
+        document.getElementById('email-code-row')?.classList.add('hidden');
+        const emailInput = document.getElementById('auth-email');
+        if (emailInput) emailInput.value = '';
+        const codeInput = document.getElementById('auth-email-code');
+        if (codeInput) codeInput.value = '';
+        const btn = document.getElementById('verify-email-btn');
+        if (btn) { btn.textContent = 'Подтвердить'; btn.disabled = false; }
     }
 }
 
@@ -522,6 +540,7 @@ function openAuthModal(mode = authMode) {
 function closeAuthModal() {
     document.getElementById('auth-modal')?.classList.add('hidden');
     document.getElementById('admin-secret-panel')?.classList.add('hidden');
+    document.getElementById('forgot-password-panel')?.classList.add('hidden');
     const passInput = document.getElementById('admin-password-input');
     if (passInput) passInput.value = '';
 }
@@ -530,57 +549,257 @@ function handleAccountButtonClick() {
     openAuthModal(currentUser ? 'login' : authMode);
 }
 
+// ─── Email verification state ─────────────────────────────────────────────────
+
+let emailVerifyCode = null;
+let emailVerifyTarget = null;
+let emailVerifyExpiry = 0;
+let emailVerified = false;
+let resetVerifyCode = null;
+let resetEmailTarget = null;
+let resetExpiry = 0;
+
+function generateCode() {
+    return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+async function sendAnyRainyEmail(to, subject, title, description, code) {
+    if (typeof emailjs === 'undefined') throw new Error('EmailJS не загружен');
+    await emailjs.send(
+        'service_z7hspf3',
+        'template_k0vlm5d',
+        { to_email: to, subject, title, description, code },
+        { publicKey: '6zjgiPPhvsm1jOGZC' }
+    );
+}
+
+
+async function requestEmailVerification() {
+    const emailInput = document.getElementById('auth-email');
+    const btn = document.getElementById('verify-email-btn');
+    const errorEl = document.getElementById('email-verify-error');
+    const email = emailInput?.value.trim().toLowerCase();
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        if (errorEl) { errorEl.textContent = 'Введи корректный email.'; errorEl.classList.remove('hidden'); }
+        return;
+    }
+    const users = getStoredUsers();
+    if (Object.values(users).some(u => u.email?.toLowerCase() === email)) {
+        if (errorEl) { errorEl.textContent = 'Этот email уже зарегистрирован.'; errorEl.classList.remove('hidden'); }
+        return;
+    }
+    if (errorEl) errorEl.classList.add('hidden');
+    if (btn) { btn.disabled = true; btn.textContent = 'Отправка...'; }
+
+    const code = generateCode();
+    emailVerifyCode = code;
+    emailVerifyTarget = email;
+    emailVerifyExpiry = Date.now() + 10 * 60 * 1000;
+    emailVerified = false;
+
+    try {
+        await sendAnyRainyEmail(
+            email,
+            'AnyRainy — подтверждение почты',
+            'Подтверди свою почту',
+            'Для завершения регистрации на AnyRainy введи этот код на сайте:',
+            code
+        );
+        document.getElementById('email-code-row')?.classList.remove('hidden');
+        document.getElementById('auth-email-code')?.focus();
+        if (btn) { btn.textContent = 'Отправить снова'; btn.disabled = false; }
+    } catch (err) {
+        const msg = err?.message || String(err);
+        if (errorEl) { errorEl.textContent = 'Ошибка: ' + msg; errorEl.classList.remove('hidden'); }
+        if (btn) { btn.textContent = 'Подтвердить'; btn.disabled = false; }
+        console.error('Verify email error:', msg);
+    }
+}
+
+function verifyEmailCode() {
+    const codeInput = document.getElementById('auth-email-code');
+    const errorEl = document.getElementById('email-verify-error');
+    const code = codeInput?.value.trim();
+
+    if (Date.now() > emailVerifyExpiry) {
+        if (errorEl) { errorEl.textContent = 'Код истёк. Запроси новый.'; errorEl.classList.remove('hidden'); }
+        return;
+    }
+    if (!code || code !== emailVerifyCode) {
+        if (errorEl) { errorEl.textContent = 'Неверный код. Попробуй ещё раз.'; errorEl.classList.remove('hidden'); }
+        return;
+    }
+    emailVerified = true;
+    if (errorEl) errorEl.classList.add('hidden');
+    document.getElementById('email-code-row')?.classList.add('hidden');
+    const msg = document.getElementById('email-verified-msg');
+    if (msg) { msg.classList.remove('hidden'); lucide.createIcons(); }
+    if (codeInput) codeInput.value = '';
+}
+
+function showForgotPassword() {
+    document.getElementById('auth-form')?.classList.add('hidden');
+    document.getElementById('auth-tabs')?.classList.add('hidden');
+    const panel = document.getElementById('forgot-password-panel');
+    if (panel) panel.classList.remove('hidden');
+    // Сброс состояния
+    const status = document.getElementById('reset-status');
+    if (status) { status.textContent = 'Введи email, на который зарегистрирован аккаунт.'; status.className = 'text-sm text-gray-500 dark:text-gray-400'; }
+    document.getElementById('reset-code-row')?.classList.add('hidden');
+    document.getElementById('reset-newpass-row')?.classList.add('hidden');
+    const sendBtn = document.getElementById('reset-send-btn');
+    if (sendBtn) { sendBtn.textContent = 'Отправить код'; sendBtn.disabled = false; }
+    resetVerifyCode = null;
+    resetEmailTarget = null;
+}
+
+function backToLogin() {
+    document.getElementById('forgot-password-panel')?.classList.add('hidden');
+    document.getElementById('auth-form')?.classList.remove('hidden');
+    document.getElementById('auth-tabs')?.classList.remove('hidden');
+    switchAuthMode('login');
+}
+
+async function sendResetCode() {
+    const emailInput = document.getElementById('reset-email-input');
+    const status = document.getElementById('reset-status');
+    const btn = document.getElementById('reset-send-btn');
+    const email = emailInput?.value.trim().toLowerCase();
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        if (status) { status.textContent = 'Введи корректный email.'; status.className = 'text-sm text-red-500'; }
+        return;
+    }
+    const users = getStoredUsers();
+    const found = Object.values(users).find(u => u.email?.toLowerCase() === email);
+    if (!found) {
+        if (status) { status.textContent = 'Аккаунт с этим email не найден.'; status.className = 'text-sm text-red-500'; }
+        return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = 'Отправка...'; }
+
+    const code = generateCode();
+    resetVerifyCode = code;
+    resetEmailTarget = email;
+    resetExpiry = Date.now() + 10 * 60 * 1000;
+
+    try {
+        await sendAnyRainyEmail(
+            email,
+            'AnyRainy — восстановление пароля',
+            'Восстановление пароля',
+            'Ты запросил сброс пароля. Введи этот код для подтверждения:',
+            code
+        );
+        document.getElementById('reset-code-row')?.classList.remove('hidden');
+        document.getElementById('reset-code-input')?.focus();
+        if (status) { status.textContent = 'Код отправлен! Проверь почту.'; status.className = 'text-sm text-green-500'; }
+        if (btn) { btn.textContent = 'Отправить снова'; btn.disabled = false; }
+    } catch (err) {
+        const msg = err?.message || String(err);
+        if (status) { status.textContent = 'Ошибка: ' + msg; status.className = 'text-sm text-red-500'; }
+        if (btn) { btn.textContent = 'Отправить код'; btn.disabled = false; }
+        console.error('Reset email error:', msg);
+    }
+}
+
+function submitResetCode() {
+    const codeInput = document.getElementById('reset-code-input');
+    const status = document.getElementById('reset-status');
+    const code = codeInput?.value.trim();
+
+    if (Date.now() > resetExpiry) {
+        if (status) { status.textContent = 'Код истёк. Запроси новый.'; status.className = 'text-sm text-red-500'; }
+        return;
+    }
+    if (!code || code !== resetVerifyCode) {
+        if (status) { status.textContent = 'Неверный код.'; status.className = 'text-sm text-red-500'; }
+        return;
+    }
+    document.getElementById('reset-code-row')?.classList.add('hidden');
+    document.getElementById('reset-newpass-row')?.classList.remove('hidden');
+    document.getElementById('reset-new-password')?.focus();
+    if (status) { status.textContent = 'Код верный! Введи новый пароль.'; status.className = 'text-sm text-green-500'; }
+}
+
+function submitPasswordReset() {
+    const newPassInput = document.getElementById('reset-new-password');
+    const status = document.getElementById('reset-status');
+    const newPass = newPassInput?.value || '';
+
+    if (newPass.length < 4) {
+        if (status) { status.textContent = 'Пароль должен быть не короче 4 символов.'; status.className = 'text-sm text-red-500'; }
+        return;
+    }
+    const users = getStoredUsers();
+    const entry = Object.entries(users).find(([, u]) => u.email?.toLowerCase() === resetEmailTarget);
+    if (!entry) {
+        if (status) { status.textContent = 'Пользователь не найден.'; status.className = 'text-sm text-red-500'; }
+        return;
+    }
+    users[entry[0]].password = newPass;
+    saveStoredUsers(users);
+    if (status) { status.textContent = 'Пароль успешно изменён! Входи.'; status.className = 'text-sm text-green-500'; }
+    resetVerifyCode = null;
+    resetEmailTarget = null;
+    setTimeout(backToLogin, 2000);
+}
+
+// ─── Submit auth form (login by username or email, register with email) ────────
+
 function submitAuthForm(event) {
     event.preventDefault();
-
     const usernameInput = document.getElementById('auth-username');
     const passwordInput = document.getElementById('auth-password');
     const status = document.getElementById('auth-status');
-
-    const username = usernameInput?.value.trim() || '';
+    const loginStr = usernameInput?.value.trim() || '';
     const password = passwordInput?.value || '';
-    const normalizedUsername = username.toLowerCase();
-
-    if (username.length < 3) {
-        if (status) status.textContent = t('username_short');
-        return;
-    }
-
-    if (password.length < 4) {
-        if (status) status.textContent = t('password_short');
-        return;
-    }
-
-    const users = getStoredUsers();
+    const normalizedLogin = loginStr.toLowerCase();
 
     if (authMode === 'register') {
-        if (users[normalizedUsername]) {
-            if (status) status.textContent = t('user_exists');
-            return;
+        if (loginStr.length < 3) { if (status) status.textContent = t('username_short'); return; }
+        if (!emailVerified || !emailVerifyTarget) { if (status) status.textContent = 'Подтверди email перед регистрацией.'; return; }
+        if (password.length < 4) { if (status) status.textContent = t('password_short'); return; }
+        const users = getStoredUsers();
+        if (users[normalizedLogin]) { if (status) status.textContent = t('user_exists'); return; }
+        if (Object.values(users).some(u => u.email?.toLowerCase() === emailVerifyTarget)) {
+            if (status) status.textContent = 'Этот email уже зарегистрирован.'; return;
         }
-        users[normalizedUsername] = { username, password };
+        users[normalizedLogin] = { username: loginStr, email: emailVerifyTarget, password };
         saveStoredUsers(users);
+        saveSession({ username: loginStr });
     } else {
-        const user = users[normalizedUsername];
-        if (!user || user.password !== password) {
-            if (status) status.textContent = t('wrong_credentials');
-            return;
+        if (!loginStr) { if (status) status.textContent = 'Введи логин или email.'; return; }
+        if (password.length < 4) { if (status) status.textContent = t('password_short'); return; }
+        const users = getStoredUsers();
+        // Ищем по логину, затем по email
+        let userEntry = users[normalizedLogin];
+        let actualUsername = loginStr;
+        if (!userEntry) {
+            const byEmail = Object.values(users).find(u => u.email?.toLowerCase() === normalizedLogin);
+            if (byEmail) { userEntry = byEmail; actualUsername = byEmail.username; }
         }
+        if (!userEntry || userEntry.password !== password) {
+            if (status) status.textContent = t('wrong_credentials'); return;
+        }
+        saveSession({ username: actualUsername });
     }
 
-    saveSession({ username });
     if (usernameInput) usernameInput.value = '';
     if (passwordInput) passwordInput.value = '';
+    emailVerified = false;
+    emailVerifyCode = null;
+    emailVerifyTarget = null;
     updateAuthUI();
     closeAuthModal();
-
-    if (currentAnime) renderPlayerUI(currentAnime);
+    refreshCommentsOnly();
 }
 
 function logout() {
     saveSession(null);
     updateAuthUI();
-    if (currentAnime) renderPlayerUI(currentAnime);
+    refreshCommentsOnly();
 }
 
 // ─── Comments ─────────────────────────────────────────────────────────────────
@@ -649,39 +868,28 @@ function renderCommentsSection(anime) {
     `;
 }
 
+function refreshCommentsOnly() {
+    const wrapper = document.getElementById('player-comments-wrapper');
+    if (wrapper && currentAnime) { wrapper.innerHTML = renderCommentsSection(currentAnime); lucide.createIcons(); }
+}
+
 function submitComment(event) {
     event.preventDefault();
-
-    if (!currentUser || !currentAnime) {
-        openAuthModal('login');
-        return;
-    }
-
+    if (!currentUser || !currentAnime) { openAuthModal('login'); return; }
     const input = document.getElementById('comment-input');
     const text = input?.value.trim() || '';
-
-    if (text.length < 2) {
-        alert(t('comment_too_short'));
-        return;
-    }
-
+    if (text.length < 2) { alert(t('comment_too_short')); return; }
     const comments = getAnimeComments(currentAnime.id);
-    comments.unshift({
-        id: `${Date.now()}`,
-        username: currentUser.username,
-        text,
-        createdAt: new Date().toLocaleString('ru-RU')
-    });
-
+    comments.unshift({ id: `${Date.now()}`, username: currentUser.username, text, createdAt: new Date().toLocaleString('ru-RU') });
     saveAnimeComments(currentAnime.id, comments);
     if (input) input.value = '';
-    renderPlayerUI(currentAnime);
+    refreshCommentsOnly();
 }
 
 function deleteComment(animeId, commentId) {
     const comments = getAnimeComments(animeId).filter(c => c.id !== commentId);
     saveAnimeComments(animeId, comments);
-    if (currentAnime && currentAnime.id === animeId) renderPlayerUI(currentAnime);
+    if (currentAnime && currentAnime.id === animeId) refreshCommentsOnly();
 }
 
 // ─── Player ───────────────────────────────────────────────────────────────────
@@ -1651,7 +1859,7 @@ function renderPlayerUI(anime) {
                 </div>
             </div>
 
-            <div class="border-subtle p-6 md:p-8 rounded-[2rem] bg-[#fafafa] dark:bg-[#171717]">
+            <div id="player-comments-wrapper" class="border-subtle p-6 md:p-8 rounded-[2rem] bg-[#fafafa] dark:bg-[#171717]">
                 ${renderCommentsSection(anime)}
             </div>
         </div>
