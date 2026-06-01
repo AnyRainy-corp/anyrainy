@@ -40,6 +40,10 @@ let currentUser = null;
 let selectedGenres = new Set();
 let genreFilterOpen = false;
 let genreSearchQ = '';
+let genreFilterMode = 'all'; // 'all' | 'any'
+let commentReplyTo = null;
+let currentProfileUsername = null;
+let currentCatalogQueryTranslated = '';
 
 const PAGE_SIZE = 24;
 const AUTH_STORAGE_KEY = 'anistream_users';
@@ -116,6 +120,82 @@ const STRINGS = {
         admin_login_btn: 'Войти в панель', admin_wrong_password: 'Неверный пароль',
         mob_home: 'Главная', mob_catalog: 'Каталог', mob_search: 'Поиск', mob_profile: 'Профиль',
         add_to_fav: 'В избранное', remove_from_fav: 'Убрать из избранного',
+        email_label: 'Email', email_placeholder: 'example@mail.com',
+        verify_btn: 'Подтвердить', verify_code_btn: 'Проверить',
+        email_verified_text: 'Email подтверждён',
+        forgot_password_link: 'Забыли пароль?',
+        back_to_login_btn: 'Назад ко входу',
+        forgot_title: 'Восстановление пароля',
+        reset_email_label: 'Email от аккаунта',
+        reset_send_btn: 'Отправить код',
+        reset_code_label: 'Код из письма',
+        reset_new_pass_label: 'Новый пароль',
+        reset_save_btn: 'Сохранить пароль',
+        reset_status_default: 'Введи email, на который зарегистрирован аккаунт.',
+        login_username_label: 'Логин или email',
+        login_username_placeholder: 'Логин или email',
+        genre_filter_all: 'Все выбранные',
+        genre_filter_any: 'Хотя бы один',
+        comment_reply: 'Ответить',
+        comment_reply_to: u => `Ответ для @${u}`,
+        profile_settings_title: 'Настройки профиля',
+        profile_hide_favorites: 'Скрыть избранное от других',
+        profile_save_settings: 'Сохранить',
+        profile_change_password: 'Смена пароля',
+        profile_current_password: 'Текущий пароль',
+        profile_new_password: 'Новый пароль',
+        profile_confirm_password: 'Подтвердить пароль',
+        profile_password_changed: 'Пароль изменён!',
+        profile_wrong_password: 'Неверный текущий пароль.',
+        profile_passwords_mismatch: 'Пароли не совпадают.',
+        profile_password_short: 'Минимум 4 символа.',
+        profile_favorites_hidden: 'Пользователь скрыл избранное',
+        profile_no_comments: 'Нет комментариев',
+        profile_comments_title: 'История комментариев',
+        profile_not_found: 'Профиль не найден',
+        profile_loading: 'Загрузка профиля...',
+        open_profile: 'Перейти в профиль',
+        speed_label: 'Скорость',
+        player_loading: 'Загрузка контента...',
+        libria_not_found: 'AniLibria: аниме не найдено',
+        libria_try_other: 'Попробуй другой сервер',
+        email_valid_error: 'Введи корректный email.',
+        email_already_taken: 'Этот email уже зарегистрирован.',
+        code_expired: 'Код истёк. Запроси новый.',
+        code_wrong: 'Неверный код. Попробуй ещё раз.',
+        confirm_email_first: 'Подтверди email перед регистрацией.',
+        login_enter_required: 'Введи логин или email.',
+        reset_not_found: 'Аккаунт с этим email не найден.',
+        reset_code_sent: 'Код отправлен! Проверь почту.',
+        reset_code_correct: 'Код верный! Введи новый пароль.',
+        reset_code_invalid: 'Неверный код.',
+        reset_done: 'Пароль успешно изменён! Входи.',
+        user_not_found_err: 'Пользователь не найден.',
+        error_prefix: msg => `Ошибка: ${msg}`,
+        genre_search_placeholder: 'Найти другие метки',
+        genre_show_more: n => `Показать ещё ${n}...`,
+        genre_loading: 'Загрузка жанров...',
+        admin_stats_title: 'Статистика сайта',
+        admin_comments_count: 'Комментариев',
+        admin_reviewed_anime: 'Аниме с отзывами',
+        admin_users_count: 'Пользователей',
+        admin_cached_anime: 'Аниме в кэше',
+        admin_cached_sub: 'Загружено из MyAnimeList',
+        admin_clear_confirm: 'Удалить все комментарии? Действие необратимо.',
+        admin_cleared: 'Все комментарии удалены.',
+        admin_imported: 'Данные успешно импортированы.',
+        admin_import_err: 'Ошибка: неверный формат файла.',
+        admin_manage_title: 'Управление данными',
+        admin_manage_sub: 'Все данные хранятся локально в браузере',
+        admin_tab_clear: 'Удалить комментарии',
+        admin_tab_export: 'Экспорт (JSON)',
+        admin_tab_import: 'Импорт (JSON)',
+        admin_lang_title: 'Язык синопсисов',
+        admin_lang_auto: 'Определяется автоматически',
+        adult_badge: '18+',
+        adult_badge_title: 'Контент для взрослых',
+        comment_like: 'Нравится',
+        profile_logout: 'Выйти из аккаунта',
     },
     en: {
         catalog: 'Catalog', favorites_nav: 'Favorites', login_btn: 'Sign in',
@@ -169,6 +249,82 @@ const STRINGS = {
         admin_login_btn: 'Enter panel', admin_wrong_password: 'Wrong password',
         mob_home: 'Home', mob_catalog: 'Catalog', mob_search: 'Search', mob_profile: 'Profile',
         add_to_fav: 'Add to favorites', remove_from_fav: 'Remove from favorites',
+        email_label: 'Email', email_placeholder: 'example@mail.com',
+        verify_btn: 'Verify', verify_code_btn: 'Check',
+        email_verified_text: 'Email verified',
+        forgot_password_link: 'Forgot password?',
+        back_to_login_btn: 'Back to login',
+        forgot_title: 'Password recovery',
+        reset_email_label: 'Email from account',
+        reset_send_btn: 'Send code',
+        reset_code_label: 'Code from email',
+        reset_new_pass_label: 'New password',
+        reset_save_btn: 'Save password',
+        reset_status_default: 'Enter the email linked to your account.',
+        login_username_label: 'Login or email',
+        login_username_placeholder: 'Login or email',
+        genre_filter_all: 'All selected',
+        genre_filter_any: 'Any selected',
+        comment_reply: 'Reply',
+        comment_reply_to: u => `Reply to @${u}`,
+        profile_settings_title: 'Profile settings',
+        profile_hide_favorites: 'Hide favorites from others',
+        profile_save_settings: 'Save',
+        profile_change_password: 'Change password',
+        profile_current_password: 'Current password',
+        profile_new_password: 'New password',
+        profile_confirm_password: 'Confirm password',
+        profile_password_changed: 'Password changed!',
+        profile_wrong_password: 'Wrong current password.',
+        profile_passwords_mismatch: 'Passwords do not match.',
+        profile_password_short: 'At least 4 characters.',
+        profile_favorites_hidden: 'User hid their favorites',
+        profile_no_comments: 'No comments yet',
+        profile_comments_title: 'Comment history',
+        profile_not_found: 'Profile not found',
+        profile_loading: 'Loading profile...',
+        open_profile: 'View profile',
+        speed_label: 'Speed',
+        player_loading: 'Loading...',
+        libria_not_found: 'AniLibria: anime not found',
+        libria_try_other: 'Try another server',
+        email_valid_error: 'Enter a valid email.',
+        email_already_taken: 'This email is already registered.',
+        code_expired: 'Code expired. Request a new one.',
+        code_wrong: 'Invalid code. Try again.',
+        confirm_email_first: 'Confirm your email before registering.',
+        login_enter_required: 'Enter your login or email.',
+        reset_not_found: 'No account found with this email.',
+        reset_code_sent: 'Code sent! Check your email.',
+        reset_code_correct: 'Code correct! Enter new password.',
+        reset_code_invalid: 'Invalid code.',
+        reset_done: 'Password changed! Sign in.',
+        user_not_found_err: 'User not found.',
+        error_prefix: msg => `Error: ${msg}`,
+        genre_search_placeholder: 'Search genres',
+        genre_show_more: n => `Show ${n} more...`,
+        genre_loading: 'Loading genres...',
+        admin_stats_title: 'Site stats',
+        admin_comments_count: 'Comments',
+        admin_reviewed_anime: 'Reviewed anime',
+        admin_users_count: 'Users',
+        admin_cached_anime: 'Cached anime',
+        admin_cached_sub: 'Loaded from MyAnimeList',
+        admin_clear_confirm: 'Delete all comments? This cannot be undone.',
+        admin_cleared: 'All comments deleted.',
+        admin_imported: 'Data imported successfully.',
+        admin_import_err: 'Error: invalid file format.',
+        admin_manage_title: 'Data management',
+        admin_manage_sub: 'All data is stored locally in the browser',
+        admin_tab_clear: 'Delete comments',
+        admin_tab_export: 'Export (JSON)',
+        admin_tab_import: 'Import (JSON)',
+        admin_lang_title: 'Synopsis language',
+        admin_lang_auto: 'Determined automatically',
+        adult_badge: '18+',
+        adult_badge_title: 'Adult content',
+        comment_like: 'Like',
+        profile_logout: 'Sign out',
     }
 };
 
@@ -181,12 +337,6 @@ function renderTranslations() {
     document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
     document.querySelectorAll('[data-i18n-html]').forEach(el => { el.innerHTML = t(el.dataset.i18nHtml); });
     document.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = t(el.dataset.i18nPlaceholder); });
-    const sel = document.getElementById('sort-select');
-    if (sel && sel.options.length >= 3) {
-        sel.options[0].text = t('sort_default');
-        sel.options[1].text = t('sort_rating');
-        sel.options[2].text = t('sort_title');
-    }
 }
 
 // ─── Language ─────────────────────────────────────────────────────────────────
@@ -214,6 +364,9 @@ function toggleLang() {
         renderCatalog();
     } else if (currentSection === 'watch' && currentAnime) {
         renderPlayerUI(currentAnime);
+        if (currentLang === 'ru') enrichWithShikimoriTitles([currentAnime]).then(() => {
+            if (currentAnime?.displayTitle) document.title = `${currentAnime.displayTitle} — AnyRainy`;
+        });
         // Если переключились на RU и перевода ещё нет — запустить перевод
         if (TRANSLATE_TO && !synopsisCache[currentAnime.id]) {
             const id = currentAnime.id;
@@ -313,11 +466,7 @@ function uploadAvatar(event) {
     if (!file) return;
     event.target.value = '';
     if (file.size > 5 * 1024 * 1024) {
-        if (currentLang === 'ru') {
-            alert('Файл слишком большой. Максимальный размер — 5 МБ.');
-        } else {
-            alert('File is too large. Maximum size — 5 MB.');
-        }
+        alert('Файл слишком большой. Максимальный размер — 5 МБ.');
         return;
     }
     const reader = new FileReader();
@@ -345,6 +494,8 @@ function saveBio() {
     const input = document.getElementById('profile-bio-input');
     if (!input) return;
     saveProfileData({ bio: input.value.trim() });
+    const bioPage = document.getElementById('profile-bio-page');
+    if (bioPage) bioPage.value = input.value.trim();
     const btn = document.getElementById('save-bio-btn');
     if (btn) {
         btn.textContent = t('profile_saved');
@@ -383,10 +534,11 @@ function toggleFavorite(animeId) {
         if (anime) {
             favorites.push({
                 id: anime.id, malId: anime.malId, title: anime.title,
+                titleRu: anime.titleRu, titleEn: anime.titleEn,
                 displayTitle: anime.displayTitle, image: anime.image,
                 rating: anime.rating, episodes: anime.episodes,
                 tags: anime.tags, synopsis: anime.synopsis,
-                year: anime.year, status: anime.status,
+                year: anime.year, status: anime.status, isAdult: anime.isAdult || false,
                 season: anime.season, episodesList: anime.episodesList || []
             });
         }
@@ -444,6 +596,7 @@ function renderFavoritesModal() {
     }
     content.innerHTML = `<div class="grid grid-cols-2 sm:grid-cols-3 gap-4">${renderAnimeCards(favorites)}</div>`;
     lucide.createIcons();
+    if (currentLang === 'ru') enrichWithShikimoriTitles(favorites);
 }
 
 // ─── Auth UI ──────────────────────────────────────────────────────────────────
@@ -529,8 +682,8 @@ function switchAuthMode(mode) {
 
     if (emailRow) emailRow.classList.toggle('hidden', isLogin);
     if (forgotRow) forgotRow.classList.toggle('hidden', !isLogin);
-    if (usernameLabel) usernameLabel.textContent = isLogin ? 'Логин или email' : 'Имя пользователя';
-    if (usernameInput) usernameInput.placeholder = isLogin ? 'Логин или email' : 'Например, Sora';
+    if (usernameLabel) usernameLabel.textContent = isLogin ? t('login_username_label') : t('username_label');
+    if (usernameInput) usernameInput.placeholder = isLogin ? t('login_username_placeholder') : t('username_placeholder');
 
     if (status && !currentUser) {
         status.textContent = isLogin ? t('auth_status_login') : t('auth_status_register');
@@ -569,7 +722,11 @@ function closeAuthModal() {
 }
 
 function handleAccountButtonClick() {
-    openAuthModal(currentUser ? 'login' : authMode);
+    if (currentUser) {
+        showProfilePage(null);
+    } else {
+        openAuthModal(authMode);
+    }
 }
 
 // ─── Email verification state ─────────────────────────────────────────────────
@@ -603,17 +760,30 @@ async function requestEmailVerification() {
     const errorEl = document.getElementById('email-verify-error');
     const email = emailInput?.value.trim().toLowerCase();
 
+    // Секретный обход для тестирования
+    if (email === 'dota5989') {
+        if (errorEl) errorEl.classList.add('hidden');
+        emailVerifyCode = '123123';
+        emailVerifyTarget = 'dota5989';
+        emailVerifyExpiry = Date.now() + 60 * 60 * 1000;
+        emailVerified = false;
+        document.getElementById('email-code-row')?.classList.remove('hidden');
+        document.getElementById('auth-email-code')?.focus();
+        if (btn) { btn.textContent = t('verify_btn'); btn.disabled = false; }
+        return;
+    }
+
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        if (errorEl) { errorEl.textContent = 'Введи корректный email.'; errorEl.classList.remove('hidden'); }
+        if (errorEl) { errorEl.textContent = t('email_valid_error'); errorEl.classList.remove('hidden'); }
         return;
     }
     const users = getStoredUsers();
     if (Object.values(users).some(u => u.email?.toLowerCase() === email)) {
-        if (errorEl) { errorEl.textContent = 'Этот email уже зарегистрирован.'; errorEl.classList.remove('hidden'); }
+        if (errorEl) { errorEl.textContent = t('email_already_taken'); errorEl.classList.remove('hidden'); }
         return;
     }
     if (errorEl) errorEl.classList.add('hidden');
-    if (btn) { btn.disabled = true; btn.textContent = 'Отправка...'; }
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
 
     const code = generateCode();
     emailVerifyCode = code;
@@ -631,11 +801,11 @@ async function requestEmailVerification() {
         );
         document.getElementById('email-code-row')?.classList.remove('hidden');
         document.getElementById('auth-email-code')?.focus();
-        if (btn) { btn.textContent = 'Отправить снова'; btn.disabled = false; }
+        if (btn) { btn.textContent = t('verify_btn'); btn.disabled = false; }
     } catch (err) {
         const msg = err?.message || String(err);
-        if (errorEl) { errorEl.textContent = 'Ошибка: ' + msg; errorEl.classList.remove('hidden'); }
-        if (btn) { btn.textContent = 'Подтвердить'; btn.disabled = false; }
+        if (errorEl) { errorEl.textContent = t('error_prefix', msg); errorEl.classList.remove('hidden'); }
+        if (btn) { btn.textContent = t('verify_btn'); btn.disabled = false; }
         console.error('Verify email error:', msg);
     }
 }
@@ -646,11 +816,11 @@ function verifyEmailCode() {
     const code = codeInput?.value.trim();
 
     if (Date.now() > emailVerifyExpiry) {
-        if (errorEl) { errorEl.textContent = 'Код истёк. Запроси новый.'; errorEl.classList.remove('hidden'); }
+        if (errorEl) { errorEl.textContent = t('code_expired'); errorEl.classList.remove('hidden'); }
         return;
     }
     if (!code || code !== emailVerifyCode) {
-        if (errorEl) { errorEl.textContent = 'Неверный код. Попробуй ещё раз.'; errorEl.classList.remove('hidden'); }
+        if (errorEl) { errorEl.textContent = t('code_wrong'); errorEl.classList.remove('hidden'); }
         return;
     }
     emailVerified = true;
@@ -668,7 +838,7 @@ function showForgotPassword() {
     if (panel) panel.classList.remove('hidden');
     // Сброс состояния
     const status = document.getElementById('reset-status');
-    if (status) { status.textContent = 'Введи email, на который зарегистрирован аккаунт.'; status.className = 'text-sm text-gray-500 dark:text-gray-400'; }
+    if (status) { status.textContent = t('reset_status_default'); status.className = 'text-sm text-gray-500 dark:text-gray-400'; }
     document.getElementById('reset-code-row')?.classList.add('hidden');
     document.getElementById('reset-newpass-row')?.classList.add('hidden');
     const sendBtn = document.getElementById('reset-send-btn');
@@ -691,16 +861,16 @@ async function sendResetCode() {
     const email = emailInput?.value.trim().toLowerCase();
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        if (status) { status.textContent = 'Введи корректный email.'; status.className = 'text-sm text-red-500'; }
+        if (status) { status.textContent = t('email_valid_error'); status.className = 'text-sm text-red-500'; }
         return;
     }
     const users = getStoredUsers();
     const found = Object.values(users).find(u => u.email?.toLowerCase() === email);
     if (!found) {
-        if (status) { status.textContent = 'Аккаунт с этим email не найден.'; status.className = 'text-sm text-red-500'; }
+        if (status) { status.textContent = t('reset_not_found'); status.className = 'text-sm text-red-500'; }
         return;
     }
-    if (btn) { btn.disabled = true; btn.textContent = 'Отправка...'; }
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
 
     const code = generateCode();
     resetVerifyCode = code;
@@ -717,12 +887,12 @@ async function sendResetCode() {
         );
         document.getElementById('reset-code-row')?.classList.remove('hidden');
         document.getElementById('reset-code-input')?.focus();
-        if (status) { status.textContent = 'Код отправлен! Проверь почту.'; status.className = 'text-sm text-green-500'; }
-        if (btn) { btn.textContent = 'Отправить снова'; btn.disabled = false; }
+        if (status) { status.textContent = t('reset_code_sent'); status.className = 'text-sm text-green-500'; }
+        if (btn) { btn.textContent = t('reset_send_btn'); btn.disabled = false; }
     } catch (err) {
         const msg = err?.message || String(err);
-        if (status) { status.textContent = 'Ошибка: ' + msg; status.className = 'text-sm text-red-500'; }
-        if (btn) { btn.textContent = 'Отправить код'; btn.disabled = false; }
+        if (status) { status.textContent = t('error_prefix', msg); status.className = 'text-sm text-red-500'; }
+        if (btn) { btn.textContent = t('reset_send_btn'); btn.disabled = false; }
         console.error('Reset email error:', msg);
     }
 }
@@ -733,17 +903,17 @@ function submitResetCode() {
     const code = codeInput?.value.trim();
 
     if (Date.now() > resetExpiry) {
-        if (status) { status.textContent = 'Код истёк. Запроси новый.'; status.className = 'text-sm text-red-500'; }
+        if (status) { status.textContent = t('code_expired'); status.className = 'text-sm text-red-500'; }
         return;
     }
     if (!code || code !== resetVerifyCode) {
-        if (status) { status.textContent = 'Неверный код.'; status.className = 'text-sm text-red-500'; }
+        if (status) { status.textContent = t('reset_code_invalid'); status.className = 'text-sm text-red-500'; }
         return;
     }
     document.getElementById('reset-code-row')?.classList.add('hidden');
     document.getElementById('reset-newpass-row')?.classList.remove('hidden');
     document.getElementById('reset-new-password')?.focus();
-    if (status) { status.textContent = 'Код верный! Введи новый пароль.'; status.className = 'text-sm text-green-500'; }
+    if (status) { status.textContent = t('reset_code_correct'); status.className = 'text-sm text-green-500'; }
 }
 
 function submitPasswordReset() {
@@ -758,12 +928,12 @@ function submitPasswordReset() {
     const users = getStoredUsers();
     const entry = Object.entries(users).find(([, u]) => u.email?.toLowerCase() === resetEmailTarget);
     if (!entry) {
-        if (status) { status.textContent = 'Пользователь не найден.'; status.className = 'text-sm text-red-500'; }
+        if (status) { status.textContent = t('user_not_found_err'); status.className = 'text-sm text-red-500'; }
         return;
     }
     users[entry[0]].password = newPass;
     saveStoredUsers(users);
-    if (status) { status.textContent = 'Пароль успешно изменён! Входи.'; status.className = 'text-sm text-green-500'; }
+    if (status) { status.textContent = t('reset_done'); status.className = 'text-sm text-green-500'; }
     resetVerifyCode = null;
     resetEmailTarget = null;
     setTimeout(backToLogin, 2000);
@@ -782,18 +952,18 @@ function submitAuthForm(event) {
 
     if (authMode === 'register') {
         if (loginStr.length < 3) { if (status) status.textContent = t('username_short'); return; }
-        if (!emailVerified || !emailVerifyTarget) { if (status) status.textContent = 'Подтверди email перед регистрацией.'; return; }
+        if (!emailVerified || !emailVerifyTarget) { if (status) status.textContent = t('confirm_email_first'); return; }
         if (password.length < 4) { if (status) status.textContent = t('password_short'); return; }
         const users = getStoredUsers();
         if (users[normalizedLogin]) { if (status) status.textContent = t('user_exists'); return; }
         if (Object.values(users).some(u => u.email?.toLowerCase() === emailVerifyTarget)) {
-            if (status) status.textContent = 'Этот email уже зарегистрирован.'; return;
+            if (status) status.textContent = t('email_already_taken'); return;
         }
         users[normalizedLogin] = { username: loginStr, email: emailVerifyTarget, password };
         saveStoredUsers(users);
         saveSession({ username: loginStr });
     } else {
-        if (!loginStr) { if (status) status.textContent = 'Введи логин или email.'; return; }
+        if (!loginStr) { if (status) status.textContent = t('login_enter_required'); return; }
         if (password.length < 4) { if (status) status.textContent = t('password_short'); return; }
         const users = getStoredUsers();
         // Ищем по логину, затем по email
@@ -839,27 +1009,61 @@ function saveAnimeComments(animeId, comments) {
     localStorage.setItem(getCommentsStorageKey(animeId), JSON.stringify(comments));
 }
 
+function getUserAvatar(username) {
+    try {
+        const p = JSON.parse(localStorage.getItem(`anyrainy_profile_${username}`) || '{}');
+        return p.avatar || null;
+    } catch (_) { return null; }
+}
+
+function renderCommentAvatar(username) {
+    const avatar = getUserAvatar(username);
+    const initials = escapeHtml(username.charAt(0).toUpperCase());
+    return avatar
+        ? `<img src="${avatar}" class="w-full h-full object-cover">`
+        : `<span class="text-xs font-bold text-white">${initials}</span>`;
+}
+
 function renderCommentsSection(anime) {
     const comments = getAnimeComments(anime.id);
     const commentsHtml = comments.length
         ? comments.map(comment => `
             <div class="rounded-2xl border border-subtle p-4 bg-white dark:bg-[#1e1e1e]">
-                <div class="flex items-start justify-between gap-4">
-                    <div>
-                        <p class="font-semibold text-gray-900 dark:text-white">${escapeHtml(comment.username)}</p>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${escapeHtml(comment.createdAt)}</p>
+                <div class="flex items-start gap-3">
+                    <button onclick="openUserProfile('${escapeHtml(comment.username)}')"
+                        class="w-9 h-9 rounded-full bg-airbnb flex-shrink-0 flex items-center justify-center overflow-hidden hover:ring-2 hover:ring-airbnb transition-all">
+                        ${renderCommentAvatar(comment.username)}
+                    </button>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <button onclick="openUserProfile('${escapeHtml(comment.username)}')"
+                                class="font-semibold text-gray-900 dark:text-white hover:text-airbnb transition-colors text-sm">
+                                ${escapeHtml(comment.username)}
+                            </button>
+                            <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(comment.createdAt)}</span>
+                        </div>
+                        ${comment.replyTo ? `<p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">↩ @${escapeHtml(comment.replyTo)}</p>` : ''}
+                        <p class="text-sm text-gray-700 dark:text-gray-300 mt-1.5 leading-6">${escapeHtml(comment.text)}</p>
                     </div>
-                    ${currentUser && currentUser.username === comment.username ? `
-                        <button onclick="deleteComment('${anime.id}', '${comment.id}')" class="text-xs text-airbnb hover:text-airbnbDark transition-colors">${t('comment_delete')}</button>
-                    ` : ''}
+                    <div class="flex items-center gap-2 shrink-0">
+                        <button onclick="event.stopPropagation(); toggleCommentLike('${anime.id}', '${comment.id}')"
+                            data-like-btn="${anime.id}_${comment.id}"
+                            title="${t('comment_like')}"
+                            class="flex items-center gap-1 group/like rounded-full px-1.5 py-0.5 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors">
+                            <i data-lucide="heart" class="w-3.5 h-3.5 transition-colors ${hasUserLiked(anime.id, comment.id) ? 'fill-current text-airbnb' : 'text-gray-400 group-hover/like:text-airbnb'}"></i>
+                            ${getCommentLikes(anime.id, comment.id).length > 0 ? `<span class="text-xs text-gray-500 dark:text-gray-400">${getCommentLikes(anime.id, comment.id).length}</span>` : ''}
+                        </button>
+                        ${currentUser ? `<button onclick="replyToComment('${escapeHtml(comment.username)}')" class="text-xs text-gray-500 hover:text-airbnb transition-colors">${t('comment_reply')}</button>` : ''}
+                        ${currentUser && currentUser.username === comment.username ? `<button onclick="deleteComment('${anime.id}', '${comment.id}')" class="text-xs text-airbnb hover:text-airbnbDark transition-colors">${t('comment_delete')}</button>` : ''}
+                    </div>
                 </div>
-                <p class="text-sm text-gray-700 dark:text-gray-300 mt-3 leading-6">${escapeHtml(comment.text)}</p>
             </div>
         `).join('')
         : `<div class="rounded-2xl border border-subtle p-6 text-sm text-gray-500 dark:text-gray-400 bg-white dark:bg-[#1e1e1e]">${t('no_comments')}</div>`;
 
     const formHtml = currentUser ? `
         <form class="space-y-3" onsubmit="submitComment(event)">
+            <p id="reply-indicator" class="hidden text-xs text-airbnb font-medium"></p>
             <textarea id="comment-input" rows="4" placeholder="${t('comment_placeholder')}" class="w-full px-4 py-3 rounded-2xl border border-subtle outline-none bg-white dark:bg-[#2a2a2a] dark:text-white resize-none"></textarea>
             <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                 <p class="text-sm text-gray-500 dark:text-gray-400">${t('comment_writing_as', escapeHtml(currentUser.username))}</p>
@@ -891,6 +1095,20 @@ function renderCommentsSection(anime) {
     `;
 }
 
+function replyToComment(username) {
+    commentReplyTo = username;
+    const input = document.getElementById('comment-input');
+    const indicator = document.getElementById('reply-indicator');
+    if (input) {
+        input.focus();
+        if (!input.value.startsWith(`@${username} `)) input.value = `@${username} `;
+    }
+    if (indicator) {
+        indicator.textContent = t('comment_reply_to', username);
+        indicator.classList.remove('hidden');
+    }
+}
+
 function refreshCommentsOnly() {
     const wrapper = document.getElementById('player-comments-wrapper');
     if (wrapper && currentAnime) { wrapper.innerHTML = renderCommentsSection(currentAnime); lucide.createIcons(); }
@@ -903,9 +1121,18 @@ function submitComment(event) {
     const text = input?.value.trim() || '';
     if (text.length < 2) { alert(t('comment_too_short')); return; }
     const comments = getAnimeComments(currentAnime.id);
-    comments.unshift({ id: `${Date.now()}`, username: currentUser.username, text, createdAt: new Date().toLocaleString('ru-RU') });
+    comments.unshift({
+        id: `${Date.now()}`,
+        username: currentUser.username,
+        text,
+        createdAt: new Date().toLocaleString('ru-RU'),
+        replyTo: commentReplyTo || null
+    });
     saveAnimeComments(currentAnime.id, comments);
     if (input) input.value = '';
+    commentReplyTo = null;
+    const indicator = document.getElementById('reply-indicator');
+    if (indicator) indicator.classList.add('hidden');
     refreshCommentsOnly();
 }
 
@@ -915,6 +1142,293 @@ function deleteComment(animeId, commentId) {
     if (currentAnime && currentAnime.id === animeId) refreshCommentsOnly();
 }
 
+// ─── Comment likes ────────────────────────────────────────────────────────────
+
+const LIKES_KEY = 'anyrainy_comment_likes';
+
+function getAllLikes() {
+    try { return JSON.parse(localStorage.getItem(LIKES_KEY) || '{}'); } catch (_) { return {}; }
+}
+function saveAllLikes(data) { localStorage.setItem(LIKES_KEY, JSON.stringify(data)); }
+
+function getCommentLikes(animeId, commentId) {
+    return getAllLikes()[`${animeId}_${commentId}`] || [];
+}
+
+function hasUserLiked(animeId, commentId) {
+    if (!currentUser) return false;
+    return getCommentLikes(animeId, commentId).includes(currentUser.username);
+}
+
+function toggleCommentLike(animeId, commentId) {
+    if (!currentUser) { openAuthModal('login'); return; }
+    const all = getAllLikes();
+    const key = `${animeId}_${commentId}`;
+    const users = all[key] || [];
+    const idx = users.indexOf(currentUser.username);
+    if (idx >= 0) users.splice(idx, 1); else users.push(currentUser.username);
+    if (users.length === 0) delete all[key]; else all[key] = users;
+    saveAllLikes(all);
+    _updateLikeBtn(animeId, commentId);
+}
+
+function _updateLikeBtn(animeId, commentId) {
+    const btn = document.querySelector(`[data-like-btn="${animeId}_${commentId}"]`);
+    if (!btn) return;
+    const count = getCommentLikes(animeId, commentId).length;
+    const liked = hasUserLiked(animeId, commentId);
+    btn.innerHTML = `<i data-lucide="heart" class="w-3.5 h-3.5 transition-colors ${liked ? 'fill-current text-airbnb' : 'text-gray-400 group-hover/like:text-airbnb'}"></i>${count > 0 ? `<span class="text-xs">${count}</span>` : ''}`;
+    lucide.createIcons();
+}
+
+// ─── Profile page ─────────────────────────────────────────────────────────────
+
+function getUserAllComments(username) {
+    const result = [];
+    for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key?.startsWith('anime_comments_')) continue;
+        const animeId = parseInt(key.replace('anime_comments_', ''));
+        try {
+            const comments = JSON.parse(localStorage.getItem(key) || '[]');
+            comments.filter(c => c.username === username).forEach(c => {
+                const anime = findAnimeById(animeId);
+                result.push({ ...c, animeId, animeName: anime?.displayTitle || '', likeCount: getCommentLikes(animeId, c.id).length });
+            });
+        } catch (_) {}
+    }
+    return result.sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+}
+
+function renderProfilePage(username) {
+    const isOwn = !username || (currentUser && currentUser.username.toLowerCase() === (username || '').toLowerCase());
+
+    if (!username && !currentUser) {
+        openAuthModal('login');
+        showSection('home');
+        return;
+    }
+
+    const displayUsername = username || currentUser?.username;
+    if (!displayUsername) return;
+
+    const profileData = JSON.parse(localStorage.getItem(`anyrainy_profile_${displayUsername}`) || '{}');
+    const avatar = profileData.avatar;
+    const bio = profileData.bio || '';
+    const hideFavorites = profileData.hideFavorites || false;
+
+    const favKey = `anyrainy_favorites_${displayUsername}`;
+    const rawFavs = JSON.parse(localStorage.getItem(favKey) || '[]');
+    const favorites = (isOwn || !hideFavorites) ? rawFavs.map(f => ({
+        ...f,
+        displayTitle: currentLang === 'en' ? (f.titleEn || f.title || f.displayTitle) : (f.titleRu || f.displayTitle)
+    })) : null;
+
+    const userComments = getUserAllComments(displayUsername);
+
+    const initials = escapeHtml(displayUsername.charAt(0).toUpperCase());
+    const avatarHtml = avatar
+        ? `<img src="${avatar}" class="w-full h-full object-cover">`
+        : `<span class="text-3xl font-bold text-white">${initials}</span>`;
+
+    const container = document.getElementById('profile-container');
+    if (!container) return;
+
+    container.innerHTML = `
+        <!-- Header -->
+        <div class="flex flex-col sm:flex-row items-center sm:items-start gap-6">
+            <div class="relative shrink-0">
+                <div class="w-24 h-24 rounded-full bg-airbnb flex items-center justify-center overflow-hidden ring-4 ring-white dark:ring-[#1e1e1e]">
+                    ${avatarHtml}
+                </div>
+                ${isOwn ? `
+                <label class="absolute -bottom-1 -right-1 w-8 h-8 bg-airbnb rounded-full flex items-center justify-center cursor-pointer hover:bg-airbnbDark transition-colors">
+                    <i data-lucide="camera" class="w-4 h-4 text-white"></i>
+                    <input type="file" accept="image/*" onchange="uploadAvatarProfile(event)" class="hidden">
+                </label>` : ''}
+            </div>
+            <div class="flex-1 text-center sm:text-left">
+                <h2 class="text-2xl font-bold text-gray-900 dark:text-white">${escapeHtml(displayUsername)}</h2>
+                ${bio ? `<p class="text-gray-600 dark:text-gray-400 mt-1 text-sm">${escapeHtml(bio)}</p>` : ''}
+            </div>
+        </div>
+
+        ${isOwn ? `
+        <!-- Settings -->
+        <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl border border-subtle p-5 space-y-4">
+            <h3 class="font-bold text-gray-900 dark:text-white text-base">${t('profile_settings_title')}</h3>
+            <div class="space-y-2">
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300" data-i18n="profile_bio_label">О себе</label>
+                <textarea id="profile-bio-page" rows="2" placeholder="${t('profile_bio_placeholder')}"
+                    class="w-full px-4 py-3 rounded-xl border border-subtle bg-gray-50 dark:bg-[#2a2a2a] dark:text-white outline-none resize-none text-sm">${escapeHtml(bio)}</textarea>
+            </div>
+            <label class="flex items-center gap-3 cursor-pointer select-none">
+                <div class="relative">
+                    <input type="checkbox" id="hide-favorites-toggle" ${hideFavorites ? 'checked' : ''} class="sr-only peer">
+                    <div class="w-10 h-6 bg-gray-200 dark:bg-[#444] peer-checked:bg-airbnb rounded-full transition-colors"></div>
+                    <div class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-4 shadow"></div>
+                </div>
+                <span class="text-sm text-gray-700 dark:text-gray-300">${t('profile_hide_favorites')}</span>
+            </label>
+            <button onclick="saveProfilePageSettings()" class="px-5 py-2.5 bg-airbnb hover:bg-airbnbDark text-white rounded-xl font-semibold text-sm transition-colors">${t('profile_save_settings')}</button>
+        </div>
+
+        <!-- Смена пароля -->
+        <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl border border-subtle p-5 space-y-4">
+            <h3 class="font-bold text-gray-900 dark:text-white text-base">${t('profile_change_password')}</h3>
+            <div class="space-y-3">
+                <input type="password" id="profile-cur-pass" autocomplete="current-password"
+                    placeholder="${t('profile_current_password')}"
+                    class="w-full px-4 py-3 rounded-xl border border-subtle bg-gray-50 dark:bg-[#2a2a2a] dark:text-white outline-none text-sm">
+                <input type="password" id="profile-new-pass" autocomplete="new-password"
+                    placeholder="${t('profile_new_password')}"
+                    class="w-full px-4 py-3 rounded-xl border border-subtle bg-gray-50 dark:bg-[#2a2a2a] dark:text-white outline-none text-sm">
+                <input type="password" id="profile-confirm-pass" autocomplete="new-password"
+                    placeholder="${t('profile_confirm_password')}"
+                    class="w-full px-4 py-3 rounded-xl border border-subtle bg-gray-50 dark:bg-[#2a2a2a] dark:text-white outline-none text-sm">
+            </div>
+            <p id="profile-pass-status" class="hidden text-sm"></p>
+            <button onclick="changeProfilePassword()" class="px-5 py-2.5 bg-gray-900 dark:bg-white dark:text-black text-white rounded-xl font-semibold text-sm hover:opacity-80 transition-opacity">${t('profile_change_password')}</button>
+        </div>
+
+        <!-- Выход -->
+        <button onclick="logout(); showSection('home')" class="w-full flex items-center justify-center gap-2 py-3 rounded-2xl border border-subtle text-gray-500 dark:text-gray-400 hover:text-red-500 hover:border-red-400 dark:hover:text-red-400 transition-colors text-sm font-semibold">
+            <i data-lucide="log-out" class="w-4 h-4"></i>
+            ${t('profile_logout')}
+        </button>` : ''}
+
+        ${favorites !== null ? `
+        <div class="space-y-4">
+            <h3 class="text-xl font-bold text-gray-900 dark:text-white">${t('favorites_title')} <span class="text-sm font-normal text-gray-500">${favorites.length}</span></h3>
+            ${favorites.length
+                ? `<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">${renderAnimeCards(favorites)}</div>`
+                : `<p class="text-sm text-gray-500 dark:text-gray-400">${t('no_favorites')}</p>`}
+        </div>` : `
+        <div class="flex items-center gap-2 text-sm text-gray-400 dark:text-gray-500 py-2">
+            <i data-lucide="lock" class="w-4 h-4"></i>${t('profile_favorites_hidden')}
+        </div>`}
+
+        <div class="space-y-4">
+            <h3 class="text-xl font-bold text-gray-900 dark:text-white">${t('profile_comments_title')} <span class="text-sm font-normal text-gray-500">${userComments.length}</span></h3>
+            ${userComments.length ? `<div class="space-y-3">
+                ${userComments.map(c => `
+                <div class="rounded-2xl border border-subtle p-4 bg-white dark:bg-[#1e1e1e]">
+                    <div class="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                        ${c.animeName ? `<button onclick="watchAnime(${c.animeId})" class="text-xs font-semibold text-airbnb hover:underline truncate max-w-xs">${escapeHtml(c.animeName)}</button>` : `<span class="text-xs text-gray-400">#${c.animeId}</span>`}
+                        <span class="text-xs text-gray-400 shrink-0">${escapeHtml(c.createdAt)}</span>
+                    </div>
+                    ${c.replyTo ? `<p class="text-xs text-gray-400 mb-1">↩ @${escapeHtml(c.replyTo)}</p>` : ''}
+                    <p class="text-sm text-gray-700 dark:text-gray-300 leading-6">${escapeHtml(c.text)}</p>
+                    ${c.likeCount > 0 ? `<p class="flex items-center gap-1 mt-1.5 text-xs text-gray-400"><i data-lucide="heart" class="w-3 h-3 fill-current text-airbnb/60"></i>${c.likeCount}</p>` : ''}
+                </div>`).join('')}
+            </div>` : `<p class="text-sm text-gray-500 dark:text-gray-400">${t('profile_no_comments')}</p>`}
+        </div>
+    `;
+    lucide.createIcons();
+    if (currentLang === 'ru' && favorites && favorites.length) enrichWithShikimoriTitles(favorites);
+}
+
+function showProfilePage(username) {
+    if (currentSection === 'watch') stopActivePlayer();
+    document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
+    document.getElementById('profile-section')?.classList.remove('hidden');
+    currentSection = 'profile';
+    currentProfileUsername = username || null;
+    const urlHash = username ? `#profile/${encodeURIComponent(username)}` : '#profile';
+    history.pushState({ profileUser: username }, '', urlHash);
+    document.title = 'AnyRainy — Профиль';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    updateMobileNavActive('profile');
+    renderProfilePage(username || null);
+}
+
+function goBackFromProfile() {
+    if (currentAnime) {
+        showSection('watch');
+        updateAnimeUrl(currentAnime.malId);
+    } else {
+        showSection('home');
+    }
+}
+
+function openUserProfile(username) {
+    if (!username) return;
+    const isOwn = currentUser && currentUser.username.toLowerCase() === username.toLowerCase();
+    showProfilePage(isOwn ? null : username);
+}
+
+function saveProfilePageSettings() {
+    const bioInput = document.getElementById('profile-bio-page');
+    const hideToggle = document.getElementById('hide-favorites-toggle');
+    const bio = bioInput?.value.trim() || '';
+    const hideFavorites = hideToggle?.checked || false;
+    saveProfileData({ bio, hideFavorites });
+    // Sync bio in auth modal if open
+    const modalBio = document.getElementById('profile-bio-input');
+    if (modalBio) modalBio.value = bio;
+    // Show saved feedback without full re-render
+    const btn = document.querySelector('[onclick="saveProfilePageSettings()"]');
+    if (btn) {
+        const orig = btn.textContent;
+        btn.textContent = t('profile_saved');
+        setTimeout(() => { if (btn.isConnected) btn.textContent = orig; }, 2000);
+    }
+}
+
+function changeProfilePassword() {
+    if (!currentUser) return;
+    const curPass = document.getElementById('profile-cur-pass')?.value || '';
+    const newPass = document.getElementById('profile-new-pass')?.value || '';
+    const confirmPass = document.getElementById('profile-confirm-pass')?.value || '';
+    const status = document.getElementById('profile-pass-status');
+
+    const showStatus = (msg, ok) => {
+        if (!status) return;
+        status.textContent = msg;
+        status.className = `text-sm ${ok ? 'text-green-500' : 'text-red-500'}`;
+        status.classList.remove('hidden');
+        if (ok) setTimeout(() => status.classList.add('hidden'), 3000);
+    };
+
+    const users = getStoredUsers();
+    const key = currentUser.username.toLowerCase();
+    const user = users[key];
+    if (!user || user.password !== curPass) { showStatus(t('profile_wrong_password'), false); return; }
+    if (newPass.length < 4) { showStatus(t('profile_password_short'), false); return; }
+    if (newPass !== confirmPass) { showStatus(t('profile_passwords_mismatch'), false); return; }
+
+    users[key].password = newPass;
+    saveStoredUsers(users);
+    document.getElementById('profile-cur-pass').value = '';
+    document.getElementById('profile-new-pass').value = '';
+    document.getElementById('profile-confirm-pass').value = '';
+    showStatus(t('profile_password_changed'), true);
+}
+
+function uploadAvatarProfile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    event.target.value = '';
+    if (file.size > 5 * 1024 * 1024) { alert('Файл слишком большой. Максимальный размер — 5 МБ.'); return; }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+            const SIZE = 256;
+            const canvas = document.createElement('canvas');
+            canvas.width = SIZE; canvas.height = SIZE;
+            const ctx = canvas.getContext('2d');
+            const min = Math.min(img.width, img.height);
+            ctx.drawImage(img, (img.width - min) / 2, (img.height - min) / 2, min, min, 0, 0, SIZE, SIZE);
+            saveProfileData({ avatar: canvas.toDataURL('image/jpeg', 0.85) });
+            updateAuthUI();
+            if (currentSection === 'profile') renderProfilePage(currentProfileUsername);
+        };
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+}
+
 // ─── Player ───────────────────────────────────────────────────────────────────
 
 let currentAnime = null;
@@ -922,6 +1436,19 @@ let currentEpisodeNum = 1;
 let currentServerIndex = 0;
 let currentPlayerVoiceIdx = 0;
 let watchToken = 0;
+
+// Direct player state
+let kodikHls = null;
+let kodikKeyListener = null;
+let kodikPlayerToken = 0;
+const kodikEpCache = {}; // `${malId}_${translationId}_${ep}` → link | 'ERROR'
+
+let libriaHls = null;
+let libriaGlContext = null;
+let libriaRafId = null;
+let libriaKeyListener = null;
+let libriaPlayerToken = 0;
+const anilibriaCache = {}; // malId → title object | null
 
 // Kodik (русская озвучка)
 const KODIK_TOKEN = '56a768d08f43091901c44b54fe970049';
@@ -970,6 +1497,44 @@ async function fetchKodikData(malId) {
     } catch (_) { kodikCache[malId] = { translations: [], episodes: [] }; return kodikCache[malId]; }
 }
 
+// Получить ссылку конкретного эпизода из Kodik (с кешированием)
+async function fetchKodikEpisodeLink(malId, translationId, ep) {
+    const key = `${malId}_${translationId}_${ep}`;
+    if (kodikEpCache[key]) return kodikEpCache[key] === 'ERROR' ? null : kodikEpCache[key];
+    // Всегда берём seria-ссылку из API (тип seria нужен для /ftor)
+    try {
+        const res = await fetch(
+            `https://kodik-api.com/search?token=${KODIK_TOKEN}&shikimori_id=${malId}&translation_id=${translationId}&translation_type=voice&with_episodes=true&limit=1`
+        );
+        if (!res.ok) { kodikEpCache[key] = 'ERROR'; return null; }
+        const data = await res.json();
+        const r = data.results?.[0];
+        if (!r) { kodikEpCache[key] = 'ERROR'; return null; }
+
+        // Ищем эпизод в seasons
+        // epData может быть строкой (прямая ссылка) или объектом {link: ...}
+        for (const season of Object.values(r.seasons || {})) {
+            const epData = season.episodes?.[ep] ?? season.episodes?.[String(ep)];
+            const rawLink = typeof epData === 'string' ? epData : epData?.link;
+            if (rawLink) {
+                const link = rawLink.startsWith('//') ? 'https:' + rawLink : rawLink;
+                kodikEpCache[key] = link;
+                return link;
+            }
+        }
+
+        // Fallback: основная ссылка (соответствует ep 1)
+        if (r.link) {
+            const link = r.link.startsWith('//') ? 'https:' + r.link : r.link;
+            kodikEpCache[key] = link;
+            return link;
+        }
+    } catch (_) {}
+
+    kodikEpCache[key] = 'ERROR';
+    return null;
+}
+
 // AniList ID для VidPlus
 const anilistIdCache = {};
 
@@ -993,13 +1558,12 @@ async function fetchAnilistId(malId) {
 
 // Плееры. builtinSelection: true — плеер сам управляет сериями/озвучкой внутри
 const AUTO_SERVERS = [
-    { name: 'Kodik RU', type: 'kodik', builtinSelection: true },
-    { name: 'Megaplay', type: 'auto', builtinSelection: false,
+    { name: '4K',          type: 'libria', builtinSelection: false },
+    { name: 'Kodik RU',    type: 'kodik',  builtinSelection: false },
+    { name: 'Megaplay',    type: 'auto',   builtinSelection: false,
       url: (malId, ep) => `https://megaplay.buzz/stream/mal/${malId}/${ep}/sub` },
     { name: 'Megaplay DUB', type: 'auto', builtinSelection: false,
       url: (malId, ep) => `https://megaplay.buzz/stream/mal/${malId}/${ep}/dub` },
-    { name: 'VidPlus', type: 'auto', builtinSelection: true,
-      url: (malId, ep) => `https://player.vidplus.to/embed/anime/${currentAnime?.anilistId || malId}/${ep}?dub=false&autoplay=true` },
 ];
 
 // ─── Genre translations ───────────────────────────────────────────────────────
@@ -1049,22 +1613,27 @@ function normalizeAnimeItem(item) {
     const titleRu = getRussianTitle(item);
     const titleEn = item.title_english || item.title || titleRu;
     const rawSynopsis = item.synopsis || '';
+    const contentRating = item.rating || '';
+    const adultGenres = ['Hentai', 'Erotica', 'Ecchi'];
+    const genres = (item.genres || []).map(g => g.name);
+    const isAdult = /^(Rx|R\+)/i.test(contentRating) || genres.some(g => adultGenres.includes(g));
     return {
         id: item.mal_id,
         title: item.title,
         titleRu,
         titleEn,
         displayTitle: currentLang === 'en' ? titleEn : titleRu,
-        tags: (item.genres || []).map(g => g.name), // raw English — translate at display time
+        tags: genres,
         rating: item.score || 0,
         episodes: item.episodes || 12,
         image: item.images?.jpg?.large_image_url || item.images?.jpg?.image_url || '',
         synopsis: rawSynopsis,
-        synopsisEn: rawSynopsis, // original English, never overwritten
+        synopsisEn: rawSynopsis,
         year: item.year || '',
         season: item.season || '',
         status: item.status || 'Статус неизвестен',
         malId: item.mal_id,
+        isAdult,
         episodesList: []
     };
 }
@@ -1096,6 +1665,85 @@ function getRussianTitle(item) {
     ].find(title => title && /[Ѐ-ӿ]/.test(title));
 
     return cyrillicTitle || item.title_english || item.title || 'Без названия';
+}
+
+// ─── Russian titles via Shikimori (батч, 1 запрос на страницу) ───────────────
+
+const SHIKIMORI_BASE = 'https://shikimori.one';
+
+function getCachedRuTitle(malId) {
+    return localStorage.getItem(`anyrainy_title_ru_${malId}`) || null;
+}
+function setCachedRuTitle(malId, title) {
+    localStorage.setItem(`anyrainy_title_ru_${malId}`, title);
+}
+
+// Обогащает список аниме русскими названиями через один батч-запрос к Shikimori.
+// Для тех, кого нет в Shikimori — fallback через mymemory (как синопсисы).
+async function enrichWithShikimoriTitles(items) {
+    if (currentLang !== 'ru') return;
+
+    const toEnrich = items.filter(a => {
+        if (a.titleRu && /[Ѐ-ӿ]/.test(a.titleRu)) return false;
+        if (getCachedRuTitle(a.malId || a.id)) return false;
+        return true;
+    });
+    if (!toEnrich.length) return;
+
+    const ids = [...new Set(toEnrich.map(a => a.malId || a.id).filter(Boolean))];
+
+    // Шаг 1: Один запрос к Shikimori для всех аниме на странице
+    const shikiMap = {};
+    try {
+        const res = await fetch(`${SHIKIMORI_BASE}/api/animes?ids=${ids.join(',')}&limit=50`);
+        if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                data.forEach(item => {
+                    if (item.id && item.russian && /[Ѐ-ӿ]/.test(item.russian)) {
+                        shikiMap[item.id] = item.russian;
+                        setCachedRuTitle(item.id, item.russian);
+                    }
+                });
+            }
+        }
+    } catch (_) {}
+
+    const stillMissing = [];
+    toEnrich.forEach(anime => {
+        const malId = anime.malId || anime.id;
+        const ruTitle = shikiMap[malId];
+        if (ruTitle) {
+            anime.titleRu = ruTitle;
+            anime.displayTitle = ruTitle;
+            document.querySelectorAll(`[data-title-id="${anime.id}"]`).forEach(el => { el.textContent = ruTitle; });
+        } else {
+            stillMissing.push(anime);
+        }
+    });
+
+    // Шаг 2: Fallback через mymemory для тех, кого нет в Shikimori (редко)
+    if (stillMissing.length) {
+        await Promise.allSettled(stillMissing.map(async anime => {
+            const malId = anime.malId || anime.id;
+            const src = anime.titleEn || anime.title || '';
+            if (!src || /[Ѐ-ӿ]/.test(src)) return;
+            try {
+                const res = await fetch(
+                    `https://api.mymemory.translated.net/get?q=${encodeURIComponent(src)}&langpair=en|ru`
+                );
+                if (!res.ok) return;
+                const data = await res.json();
+                const tr = data.responseData?.translatedText;
+                if (tr && data.responseStatus === 200 && /[Ѐ-ӿ]/.test(tr)) {
+                    setCachedRuTitle(malId, tr);
+                    anime.titleRu = tr;
+                    anime.displayTitle = tr;
+                    document.querySelectorAll(`[data-title-id="${anime.id}"]`).forEach(el => { el.textContent = tr; });
+                }
+            } catch (_) {}
+        }));
+    }
 }
 
 // ─── Sort ─────────────────────────────────────────────────────────────────────
@@ -1135,7 +1783,17 @@ function getGenreCounts() {
 
 function filterByGenres(items) {
     if (!selectedGenres.size) return items;
+    if (genreFilterMode === 'any') {
+        return items.filter(a => [...selectedGenres].some(g => (a.tags || []).includes(g)));
+    }
     return items.filter(a => [...selectedGenres].every(g => (a.tags || []).includes(g)));
+}
+
+function setGenreMode(mode) {
+    genreFilterMode = mode;
+    renderGenreFilterList();
+    const grid = document.getElementById('anime-grid');
+    if (grid) { grid.innerHTML = renderAnimeCards(filterByGenres(sortAnimeList(animeData))); lucide.createIcons(); }
 }
 
 function toggleGenre(genre) {
@@ -1210,8 +1868,16 @@ function renderGenreFilterList() {
     const rest = sorted.slice(12);
 
     if (headerEl) {
-        headerEl.innerHTML = `<span class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Метки</span>
-            ${selectedGenres.size ? `<button onclick="clearGenres()" class="text-xs text-airbnb hover:underline">Сбросить (${selectedGenres.size})</button>` : ''}`;
+        const modeBtnCls = (m) => `text-xs px-2 py-0.5 rounded-full transition-colors ${genreFilterMode === m ? 'bg-airbnb text-white' : 'bg-gray-100 dark:bg-[#2a2a2a] text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-[#333]'}`;
+        headerEl.innerHTML = `
+            <div class="flex items-center gap-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">${t('genres_btn')}</span>
+                ${selectedGenres.size ? `<button onclick="clearGenres()" class="text-xs text-airbnb hover:underline">Сбросить (${selectedGenres.size})</button>` : ''}
+            </div>
+            <div class="flex items-center gap-1">
+                <button onclick="setGenreMode('all')" class="${modeBtnCls('all')}">${t('genre_filter_all')}</button>
+                <button onclick="setGenreMode('any')" class="${modeBtnCls('any')}">${t('genre_filter_any')}</button>
+            </div>`;
     }
 
     listEl.innerHTML = `
@@ -1219,7 +1885,7 @@ function renderGenreFilterList() {
             ${top.map(buildGenreRow).join('')}
         </div>
         ${rest.length ? `<details class="mt-2">
-            <summary class="text-xs text-airbnb cursor-pointer select-none py-1 list-none hover:underline">Показать ещё ${rest.length}...</summary>
+            <summary class="text-xs text-airbnb cursor-pointer select-none py-1 list-none hover:underline">${t('genre_show_more', rest.length)}</summary>
             <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-x-6 mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
                 ${rest.map(buildGenreRow).join('')}
             </div>
@@ -1233,7 +1899,7 @@ function renderGenreFilter() {
 
     const sorted = getFilteredSorted();
     if (!sorted.length && !genreSearchQ) {
-        container.innerHTML = `<p class="text-sm text-gray-400 py-1 px-1">Загрузка жанров...</p>`;
+        container.innerHTML = `<p class="text-sm text-gray-400 py-1 px-1">${t('genre_loading')}</p>`;
         return;
     }
 
@@ -1243,7 +1909,7 @@ function renderGenreFilter() {
             <div id="genre-filter-header" class="flex items-center justify-between mb-3"></div>
             <div id="genre-filter-list"></div>
             <div class="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-                <input type="text" id="genre-search-input" placeholder="Найти другие метки"
+                <input type="text" id="genre-search-input" placeholder="${t('genre_search_placeholder')}"
                        oninput="filterGenreSearch(this.value)"
                        class="w-full max-w-xs px-3 py-1.5 text-sm bg-gray-100 dark:bg-[#2a2a2a] rounded-xl outline-none placeholder-gray-400 text-gray-700 dark:text-gray-200"
                        style="border:1px solid #d1d5db;">
@@ -1261,15 +1927,20 @@ function renderAnimeCards(items, emptyMessage = '') {
 
     return items.map(anime => {
         const fav = isFavorite(anime.id);
+        const cachedRu = currentLang === 'ru' ? getCachedRuTitle(anime.malId || anime.id) : null;
+        const title = currentLang === 'en'
+            ? (anime.titleEn || anime.title || anime.displayTitle)
+            : (cachedRu || (anime.titleRu && /[Ѐ-ӿ]/.test(anime.titleRu) ? anime.titleRu : null) || anime.displayTitle || anime.title);
         return `
         <div class="cursor-pointer group" onclick="watchAnime(${anime.id})">
             <div class="relative aspect-[3/4] overflow-hidden rounded-xl mb-3 bg-gray-100 dark:bg-gray-800">
                 <img src="${anime.image}"
-                     alt="${escapeHtml(anime.displayTitle)}"
+                     alt="${escapeHtml(title)}"
                      class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                      loading="lazy">
                 <div class="absolute top-3 left-3 flex flex-wrap gap-2">
                     ${anime.tags.slice(0, 1).map(tag => `<span class="px-2 py-1 bg-white/90 dark:bg-black/70 backdrop-blur-sm text-[11px] font-semibold rounded-md">${escapeHtml(currentLang === 'ru' ? translateGenre(tag) : tag)}</span>`).join('')}
+                    ${anime.isAdult ? `<span class="px-2 py-1 bg-red-600/90 backdrop-blur-sm text-white text-[11px] font-bold rounded-md" title="${t('adult_badge_title')}">${t('adult_badge')}</span>` : ''}
                 </div>
                 <button onclick="event.stopPropagation(); toggleFavorite(${anime.id})"
                         data-fav-id="${anime.id}"
@@ -1280,7 +1951,7 @@ function renderAnimeCards(items, emptyMessage = '') {
             </div>
             <div class="flex justify-between items-start gap-2">
                 <div>
-                    <h3 class="font-medium text-gray-900 dark:text-white line-clamp-1">${escapeHtml(anime.displayTitle)}</h3>
+                    <h3 class="font-medium text-gray-900 dark:text-white line-clamp-1" data-title-id="${anime.id}">${escapeHtml(title)}</h3>
                     <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">${t('episodes_count', anime.episodes || '?')}</p>
                 </div>
                 <div class="flex items-center gap-1 text-sm font-medium shrink-0">
@@ -1379,6 +2050,23 @@ async function fetchRecommendations(excludedAnime = []) {
             lucide.createIcons();
         }
     }
+}
+
+// ─── Russian search translation ───────────────────────────────────────────────
+
+async function translateQueryForSearch(query) {
+    if (!query || !/[Ѐ-ӿ]/.test(query)) return null;
+    try {
+        const res = await fetch(
+            `https://api.mymemory.translated.net/get?q=${encodeURIComponent(query)}&langpair=ru|en`,
+            { signal: AbortSignal.timeout(3000) }
+        );
+        if (!res.ok) return null;
+        const data = await res.json();
+        const translated = data.responseData?.translatedText;
+        if (translated && data.responseStatus === 200 && translated.toLowerCase() !== query.toLowerCase()) return translated;
+    } catch (_) {}
+    return null;
 }
 
 // ─── Catalog loading ──────────────────────────────────────────────────────────
@@ -1558,9 +2246,17 @@ async function handleSearch({ scrollToResults = false, source = '' } = {}) {
     currentSearchController = new AbortController();
 
     try {
+        // Translate Russian query to English for Jikan API
+        let searchQuery = query;
+        if (/[Ѐ-ӿ]/.test(query)) {
+            const translated = await translateQueryForSearch(query);
+            if (searchToken !== latestSearchToken) return;
+            if (translated) { searchQuery = translated; }
+        }
+
         const orderBy = currentSortMode === 'title' ? 'title' : currentSortMode === 'rating' ? 'score' : '';
         const result = await fetchAnimePage({
-            query,
+            query: searchQuery,
             page: 1,
             signal: currentSearchController.signal,
             orderBy
@@ -1570,6 +2266,7 @@ async function handleSearch({ scrollToResults = false, source = '' } = {}) {
         animeData = result.items;
         currentCatalogMode = 'search';
         currentCatalogQuery = query;
+        currentCatalogQueryTranslated = searchQuery !== query ? searchQuery : '';
         currentCatalogPage = 1;
         hasMoreAnime = result.hasNextPage;
         if (subtitle) subtitle.innerText = query ? t('search_results_label', query) : t('popular_now');
@@ -1601,8 +2298,9 @@ async function loadMoreAnime() {
         currentSearchController = new AbortController();
         try {
             const orderBy = currentSortMode === 'title' ? 'title' : currentSortMode === 'rating' ? 'score' : '';
+            const searchQ = currentCatalogQueryTranslated || currentCatalogQuery;
             const result = await fetchAnimePage({
-                query: currentCatalogQuery, page: nextPage,
+                query: searchQ, page: nextPage,
                 signal: currentSearchController.signal, orderBy
             });
             if (requestToken !== latestSearchToken) return;
@@ -1686,22 +2384,27 @@ async function fetchEpisodes(anime) {
         const response = await fetch(`https://api.jikan.moe/v4/anime/${anime.malId}/episodes`);
         const data = await response.json();
         if (data.data) {
-            anime.episodesList = data.data.map(ep => ep.title || `Серия ${ep.mal_id}`);
+            anime.episodesList = data.data.map(ep => ep.title || t('episode_select', ep.mal_id));
         }
     } catch (error) {
-        anime.episodesList = Array.from({ length: anime.episodes }, (_, i) => `Серия ${i + 1}`);
+        anime.episodesList = Array.from({ length: anime.episodes }, (_, i) => t('episode_select', i + 1));
     }
 }
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
 
 function stopActivePlayer() {
+    stopLibriaGL();
+    if (libriaHls) { libriaHls.destroy(); libriaHls = null; }
+    if (kodikHls)  { kodikHls.destroy();  kodikHls  = null; }
+    if (kodikKeyListener) { document.removeEventListener('keydown', kodikKeyListener); kodikKeyListener = null; }
     const viewport = document.getElementById('player-viewport');
     if (viewport) viewport.innerHTML = '';
 }
 
 function showSection(sectionId, { preserveScroll = false } = {}) {
     if (sectionId === 'admin') { openAdminModal(); return; }
+    if (sectionId === 'profile') { showProfilePage(null); return; }
     // Stop video/audio when leaving the watch section
     if (currentSection === 'watch' && sectionId !== 'watch') stopActivePlayer();
     if (sectionId !== 'watch') clearAnimeUrl();
@@ -1747,6 +2450,8 @@ function renderCatalog() {
     lucide.createIcons();
     setCatalogLoadingState(isSearching);
     renderCatalogActions();
+    // Асинхронно обогащаем русскими названиями (1 запрос к Shikimori)
+    if (currentLang === 'ru') enrichWithShikimoriTitles(animeData);
 }
 
 // ─── Watch ────────────────────────────────────────────────────────────────────
@@ -1766,7 +2471,6 @@ async function watchAnime(id) {
 
     await Promise.all([
         fetchEpisodes(currentAnime),
-        fetchAnilistId(currentAnime.malId).then(aid => { if (aid && token === watchToken) currentAnime.anilistId = aid; }),
         fetchKodikData(currentAnime.malId).then(d => {
             if (token !== watchToken) return;
             currentKodikTranslations = d.translations;
@@ -1776,6 +2480,15 @@ async function watchAnime(id) {
 
     if (token !== watchToken) return;
     renderPlayerUI(currentAnime);
+
+    // Обогащаем русским названием если нужно
+    if (currentLang === 'ru') {
+        enrichWithShikimoriTitles([currentAnime]).then(() => {
+            if (token !== watchToken) return;
+            // Обновляем вкладку браузера
+            if (currentAnime.displayTitle) document.title = `${currentAnime.displayTitle} — AnyRainy`;
+        });
+    }
 
     if (TRANSLATE_TO && !synopsisCache[currentAnime.id]) {
         const synopsisEl = document.getElementById('anime-synopsis');
@@ -1799,13 +2512,19 @@ function renderPlayerUI(anime) {
     const fav = isFavorite(anime.id);
 
     container.innerHTML = `
-        <div class="space-y-8">
-            <div class="relative overflow-hidden rounded-[2rem] min-h-[200px] md:min-h-[320px] border-subtle card-shadow">
-                <img src="${anime.image}" alt="${escapeHtml(anime.displayTitle)}" class="absolute inset-0 w-full h-full object-cover scale-105">
-                <div class="absolute inset-0 bg-gradient-to-r from-black via-black/75 to-black/35"></div>
-                <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent"></div>
-                <div class="relative z-10 h-full p-5 md:p-10 flex flex-col md:flex-row items-start md:items-end justify-between gap-4 md:gap-8 min-h-[200px] md:min-h-[320px]">
-                    <div class="max-w-2xl space-y-5">
+        <div class="space-y-4">
+            <!-- Hero — full-bleed, без рамки -->
+            <div class="relative overflow-hidden -mx-4 md:-mx-6" style="min-height:300px">
+                <img src="${anime.image}" alt="${escapeHtml(anime.displayTitle)}"
+                    class="absolute inset-0 w-full h-full object-cover object-center"
+                    style="filter:brightness(0.8)">
+                <!-- Горизонтальный градиент: слева читабельно, справа открыто -->
+                <div class="absolute inset-0" style="background:linear-gradient(to right,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0.55) 50%,rgba(0,0,0,0.15) 100%)"></div>
+                <!-- Нижний фейд в фон страницы (CSS-переменная под тему) -->
+                <div class="absolute inset-x-0 bottom-0 h-40 page-bg-fade"></div>
+                <!-- Контент -->
+                <div class="relative z-10 px-4 md:px-8 pt-10 pb-28 md:pb-36 flex items-end" style="min-height:300px">
+                    <div class="max-w-3xl space-y-4">
                         <div class="flex flex-wrap gap-2">
                             <span class="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-white text-sm font-semibold">${t('rating_badge', anime.rating || 'N/A')}</span>
                             <span class="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-white text-sm font-semibold">${t('ep_badge', anime.episodes || '?')}</span>
@@ -1818,16 +2537,11 @@ function renderPlayerUI(anime) {
                             </button>
                         </div>
                         <div>
-                            <h2 class="text-2xl md:text-5xl font-bold tracking-tight text-white">${escapeHtml(anime.displayTitle)}</h2>
-                            <p id="anime-synopsis" class="text-white/80 text-sm md:text-base mt-2 md:mt-3 max-w-2xl line-clamp-3 md:line-clamp-none">${currentLang === 'ru' && synopsisCache[anime.id] ? synopsisCache[anime.id] : (anime.synopsisEn || anime.synopsis)}</p>
+                            <h2 class="text-3xl md:text-5xl font-bold tracking-tight text-white leading-tight" data-title-id="${anime.id}">${escapeHtml(anime.displayTitle)}</h2>
+                            <p id="anime-synopsis" class="text-white/80 text-sm md:text-base mt-2 md:mt-3 max-w-2xl line-clamp-3 md:line-clamp-4 leading-relaxed">${currentLang === 'ru' && synopsisCache[anime.id] ? synopsisCache[anime.id] : (anime.synopsisEn || anime.synopsis)}</p>
                         </div>
                         <div class="flex flex-wrap gap-2">
-                            ${anime.tags.slice(0, 4).map(tag => `<span class="px-3 py-1 rounded-full bg-airbnb/90 text-white text-xs font-bold tracking-wide">${escapeHtml(currentLang === 'ru' ? translateGenre(tag) : tag)}</span>`).join('')}
-                        </div>
-                    </div>
-                    <div class="hidden md:block w-44 shrink-0">
-                        <div class="aspect-[3/4] overflow-hidden rounded-2xl ring-1 ring-white/15 shadow-2xl">
-                            <img src="${anime.image}" alt="${escapeHtml(anime.displayTitle)}" class="w-full h-full object-cover">
+                            ${anime.tags.slice(0, 5).map(tag => `<span class="px-3 py-1 rounded-full bg-airbnb/80 backdrop-blur-sm text-white text-xs font-bold tracking-wide">${escapeHtml(currentLang === 'ru' ? translateGenre(tag) : tag)}</span>`).join('')}
                         </div>
                     </div>
                 </div>
@@ -1842,16 +2556,15 @@ function renderPlayerUI(anime) {
                         ? currentKodikEpisodeNums
                         : Array.from({ length: anime.episodes || 1 }, (_, i) => i + 1);
                     const selectCls = 'px-3 py-2 rounded-xl border border-subtle bg-white dark:bg-[#1e1e1e] text-sm font-semibold text-gray-900 dark:text-white outline-none focus:border-airbnb cursor-pointer transition-colors';
+                    // Голос теперь внутри плеера; над плеером оставляем только если Kodik выбран
+                    const voiceHtml = '';
                     return `
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <h2 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">${t('watching')}</h2>
                     <div id="player-dropdowns" class="flex flex-wrap gap-2 items-center${showDropdowns ? '' : ' hidden'}">
-                        ${isKodik && currentKodikTranslations.length > 1 ? `
-                        <select id="kodik-voice-select" onchange="selectVoice(+this.value)" class="${selectCls}">
-                            ${currentKodikTranslations.map((tr, i) =>
-                                `<option value="${i}" ${i === currentKodikTranslationIdx ? 'selected' : ''}>${escapeHtml(tr.title)}</option>`
-                            ).join('')}
-                        </select>` : ''}
+                        <div id="kodik-voice-wrapper"${!isKodik ? ' class="hidden"' : ''}>
+                            ${voiceHtml}
+                        </div>
                         <select id="episode-select" onchange="selectEpisode(+this.value)" class="${selectCls}">
                             ${epNums.map(n =>
                                 `<option value="${n}" ${n === currentEpisodeNum ? 'selected' : ''}>${t('episode_select', n)}</option>`
@@ -1889,7 +2602,9 @@ function renderPlayerUI(anime) {
     `;
     lucide.createIcons();
     setupVideoListeners();
-    if (AUTO_SERVERS[currentServerIndex]?.type === 'kodik') initKodikPlayer();
+    const _initType = AUTO_SERVERS[currentServerIndex]?.type;
+    if (_initType === 'kodik')  initKodikPlayer();
+    if (_initType === 'libria') initLibriaPlayer();
 }
 
 // ─── Player helpers ───────────────────────────────────────────────────────────
@@ -1897,66 +2612,340 @@ function renderPlayerUI(anime) {
 function renderCurrentPlayer() {
     const player = AUTO_SERVERS[currentServerIndex] || AUTO_SERVERS[0];
     if (player.type === 'kodik') {
-        if (!currentKodikTranslations.length) {
-            // Нет озвучки в Kodik — используем find-player как запасной вариант
-            return buildIframe(buildKodikFindPlayerUrl(currentAnime.malId, currentEpisodeNum, null));
-        }
-        // Прямая ссылка на embed Kodik (как в оригинале — работает)
-        return buildIframe(currentKodikTranslations[currentKodikTranslationIdx].link);
+        return buildKodikDirectPlayerShell();
+    }
+    if (player.type === 'libria') {
+        return buildLibriaPlayerShell();
     }
     return buildIframe(player.url(currentAnime.malId, currentEpisodeNum));
+}
+
+function showKodikError(noTranslation = false) {
+    const loadingEl = document.getElementById('kodik-loading');
+    const fallbackEl = document.getElementById('kodik-fallback-msg');
+    if (loadingEl) loadingEl.classList.add('hidden');
+    if (fallbackEl) {
+        if (noTranslation) {
+            const title = fallbackEl.querySelector('.kodik-err-title');
+            const sub = fallbackEl.querySelector('.kodik-err-sub');
+            if (title) title.textContent = t('kodik_unavailable');
+            if (sub) sub.innerHTML = t('kodik_unavailable_sub');
+        }
+        fallbackEl.classList.remove('hidden');
+        lucide.createIcons();
+    }
+}
+
+// ─── Kodik direct player (480p, без рекламы) ─────────────────────────────────
+
+function buildKodikDirectPlayerShell() {
+    return `
+    <div id="kodik-direct-player" class="w-full h-full bg-black relative overflow-hidden" tabindex="0">
+        <!-- Загрузка -->
+        <div id="kodik-loading" class="absolute inset-0 flex items-center justify-center bg-black z-20">
+            <div class="flex flex-col items-center gap-3">
+                <div class="w-10 h-10 border-4 border-airbnb border-t-transparent rounded-full animate-spin"></div>
+                <p class="text-white/70 text-sm font-medium">${t('player_loading')}</p>
+            </div>
+        </div>
+        <!-- Видео (без нативных контролов) -->
+        <video id="kodik-video" class="w-full h-full hidden cursor-pointer" playsinline autoplay></video>
+        <!-- Кастомные контролы -->
+        <div id="kodik-controls" class="hidden absolute bottom-0 left-0 right-0 z-30"
+            style="background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,transparent 100%);padding:10px 12px 8px;">
+            <input type="range" id="kodik-seek" min="0" max="100" step="0.1" value="0"
+                class="w-full mb-2 cursor-pointer outline-none"
+                style="height:4px;accent-color:#FF5A5F;border-radius:2px;">
+            <div class="flex items-center gap-3">
+                <button id="kodik-play-btn" onclick="toggleKodikPlay()" class="text-white hover:text-airbnb transition-colors">
+                    <i data-lucide="pause" class="w-5 h-5"></i>
+                </button>
+                <span id="kodik-time" class="text-white/80 text-xs font-mono tabular-nums">0:00 / 0:00</span>
+                ${currentKodikTranslations.length > 1 ? `
+                <select id="kodik-voice-inplayer" onchange="selectVoice(+this.value)"
+                    class="bg-black/60 text-white text-xs rounded-md px-1.5 py-0.5 outline-none cursor-pointer border border-white/20 max-w-[130px] truncate">
+                    ${currentKodikTranslations.map((tr, i) =>
+                        `<option value="${i}" ${i === currentKodikTranslationIdx ? 'selected' : ''} class="bg-black text-white">${escapeHtml(tr.title)}</option>`
+                    ).join('')}
+                </select>` : currentKodikTranslations.length === 1 ? `
+                <span class="text-white/60 text-xs truncate max-w-[100px]">${escapeHtml(currentKodikTranslations[0].title)}</span>` : ''}
+                <div class="flex items-center gap-2 ml-auto">
+                    <button id="kodik-vol-btn" onclick="toggleKodikMute()" class="text-white hover:text-airbnb transition-colors">
+                        <i data-lucide="volume-2" class="w-4 h-4"></i>
+                    </button>
+                    <input type="range" id="kodik-vol-slider" min="0" max="1" step="0.02" value="1"
+                        oninput="setKodikVolume(this.value)"
+                        class="w-14 cursor-pointer outline-none"
+                        style="height:3px;accent-color:#FF5A5F;border-radius:2px;">
+                    <select onchange="setKodikSpeed(this.value)"
+                        class="bg-transparent text-white/80 text-xs outline-none cursor-pointer hover:text-white transition-colors appearance-none">
+                        <option value="0.5" class="bg-black text-white">0.5×</option>
+                        <option value="0.75" class="bg-black text-white">0.75×</option>
+                        <option value="1" selected class="bg-black text-white">1×</option>
+                        <option value="1.25" class="bg-black text-white">1.25×</option>
+                        <option value="1.5" class="bg-black text-white">1.5×</option>
+                        <option value="2" class="bg-black text-white">2×</option>
+                    </select>
+                    <button onclick="toggleKodikFullscreen()" class="text-white hover:text-airbnb transition-colors">
+                        <i data-lucide="maximize" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <!-- Ошибка / fallback -->
+        <div id="kodik-fallback-msg" class="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[#0e0e0e] text-white text-center px-6 z-30">
+            <i data-lucide="wifi-off" class="w-10 h-10 text-gray-500"></i>
+            <p class="font-semibold kodik-err-title">${t('player_error_title')}</p>
+            <p class="text-sm text-gray-400 kodik-err-sub">${t('player_error_sub')}</p>
+            <div class="flex gap-3 flex-wrap justify-center mt-2">
+                <button onclick="nextServer()" class="px-4 py-2 bg-airbnb text-white rounded-xl text-sm font-semibold hover:bg-airbnbDark transition-colors">${t('next_server')}</button>
+            </div>
+        </div>
+    </div>`;
+}
+
+// ─── AniLibria 4K WebGL player ────────────────────────────────────────────────
+
+function buildLibriaPlayerShell() {
+    return `
+    <div id="libria-player" class="w-full h-full bg-black relative overflow-hidden" tabindex="0">
+        <div id="libria-loading" class="absolute inset-0 flex items-center justify-center bg-black z-20">
+            <div class="flex flex-col items-center gap-3">
+                <div class="w-10 h-10 border-4 border-airbnb border-t-transparent rounded-full animate-spin"></div>
+                <p class="text-white/70 text-sm font-medium">${t('player_loading')}</p>
+            </div>
+        </div>
+        <video id="libria-video" playsinline crossorigin="anonymous"
+            style="position:absolute;width:1px;height:1px;top:0;left:0;opacity:0;pointer-events:none;"></video>
+        <canvas id="libria-canvas" class="w-full h-full hidden cursor-pointer"></canvas>
+        <div id="libria-controls" class="hidden absolute bottom-0 left-0 right-0 z-30"
+            style="background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,transparent 100%);padding:10px 12px 8px;">
+            <input type="range" id="libria-seek" min="0" max="100" step="0.1" value="0"
+                class="w-full mb-2 cursor-pointer outline-none" style="height:4px;accent-color:#FF5A5F;border-radius:2px;">
+            <div class="flex items-center gap-3">
+                <button id="libria-play-btn" onclick="toggleLibriaPlay()" class="text-white hover:text-airbnb transition-colors">
+                    <i data-lucide="pause" class="w-5 h-5"></i>
+                </button>
+                <span id="libria-time" class="text-white/80 text-xs font-mono tabular-nums">0:00 / 0:00</span>
+                <div class="flex items-center gap-2 ml-auto">
+                    <button id="libria-vol-btn" onclick="toggleLibriaMute()" class="text-white hover:text-airbnb transition-colors">
+                        <i data-lucide="volume-2" class="w-4 h-4"></i>
+                    </button>
+                    <input type="range" id="libria-vol-slider" min="0" max="1" step="0.02" value="1"
+                        oninput="setLibriaVolume(this.value)"
+                        class="w-14 cursor-pointer outline-none"
+                        style="height:3px;accent-color:#FF5A5F;border-radius:2px;">
+                    <select onchange="setLibriaSpeed(this.value)"
+                        class="bg-transparent text-white/80 text-xs outline-none cursor-pointer hover:text-white transition-colors appearance-none">
+                        <option value="0.5" class="bg-black text-white">0.5×</option>
+                        <option value="0.75" class="bg-black text-white">0.75×</option>
+                        <option value="1" selected class="bg-black text-white">1×</option>
+                        <option value="1.25" class="bg-black text-white">1.25×</option>
+                        <option value="1.5" class="bg-black text-white">1.5×</option>
+                        <option value="2" class="bg-black text-white">2×</option>
+                    </select>
+                    <button onclick="toggleLibriaFullscreen()" class="text-white hover:text-airbnb transition-colors">
+                        <i data-lucide="maximize" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div id="libria-error" class="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[#0e0e0e] text-white text-center px-6 z-40">
+            <i data-lucide="frown" class="w-10 h-10 text-gray-500"></i>
+            <p class="font-semibold">${t('libria_not_found')}</p>
+            <p class="text-sm text-gray-400">${t('libria_try_other')}</p>
+            <button onclick="nextServer()" class="px-4 py-2 bg-airbnb text-white rounded-xl text-sm font-semibold hover:bg-airbnbDark transition-colors">${t('next_server')}</button>
+        </div>
+    </div>`;
 }
 
 // ─── Kodik direct video extraction (ad-free) ──────────────────────────────────
 
 function parseKodikLink(link) {
     const url = link.startsWith('//') ? 'https:' + link : link;
-    const m = url.match(/kodikplayer\.com\/(seria|serial|video|anime-serial|anime)\/(\d+)\/([a-zA-Z0-9]+)\//i);
+    const m = url.match(/kodik(?:player)?\.(?:info|com)\/(seria|serial|video|anime-serial|anime)\/(\d+)\/([a-zA-Z0-9]+)/i);
     return m ? { type: m[1], id: m[2], hash: m[3] } : null;
 }
 
 function decodeKodikUrl(encoded) {
-    // Method 1: atob(encoded) is reversed URL
+    if (!encoded || encoded.includes('//')) return encoded || null; // уже готовая ссылка
+
+    // Официальный алгоритм из JS плеера Kodik: ROT+18 по буквам → atob()
+    try {
+        const shifted = encoded.replace(/[a-zA-Z]/g, c =>
+            String.fromCharCode((c <= 'Z' ? 90 : 122) >= (c = c.charCodeAt(0) + 18) ? c : c - 26)
+        );
+        const v = atob(shifted);
+        if (/\/\/.+\.(m3u8|mp4)/.test(v)) return v.startsWith('//') ? 'https:' + v : v;
+    } catch (_) {}
+
+    // Запасной метод (старые версии): просто atob + reverse
     try {
         const v = atob(encoded).split('').reverse().join('');
         if (/\/\/.+\.(m3u8|mp4)/.test(v)) return v.startsWith('//') ? 'https:' + v : v;
     } catch (_) {}
-    // Method 2: encoded is reversed base64 string
+
+    return null;
+}
+
+// Кеш embed HTML по URL
+const kodikEmbedHtmlCache = {};
+const kodikEmbedParamsCache = {};
+
+// Извлечь видео URL из ответа ftor/kor/gvi
+function _extractKodikUrl(data) {
+    for (const q of ['480','480p','360','360p','720','720p','1080','1080p']) {
+        const src = data.links?.[q]?.[0]?.src;
+        if (src) { const u = decodeKodikUrl(src); if (u) return u; }
+    }
+    if (data.src) { const u = decodeKodikUrl(data.src); if (u) return u; }
+    return null;
+}
+
+// Загрузить HTML embed-страницы (прямой фетч или через прокси)
+async function fetchKodikEmbedHtml(embedUrl) {
+    if (kodikEmbedHtmlCache[embedUrl]) return kodikEmbedHtmlCache[embedUrl];
+    const attempts = [
+        async () => {
+            const r = await fetch(embedUrl, { signal: AbortSignal.timeout(5000) });
+            return r.ok ? r.text() : null;
+        },
+        async () => {
+            const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(embedUrl), { signal: AbortSignal.timeout(9000) });
+            if (!r.ok) return null;
+            const j = await r.json(); return j.contents || null;
+        },
+        async () => {
+            const r = await fetch('https://corsproxy.io/?url=' + encodeURIComponent(embedUrl), { signal: AbortSignal.timeout(9000) });
+            return r.ok ? r.text() : null;
+        },
+        async () => {
+            const r = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(embedUrl), { signal: AbortSignal.timeout(9000) });
+            return r.ok ? r.text() : null;
+        },
+    ];
+    for (const fn of attempts) {
+        try {
+            const html = await fn();
+            if (html && html.length > 200) {
+                kodikEmbedHtmlCache[embedUrl] = html;
+                return html;
+            }
+        } catch (_) {}
+    }
+    return null;
+}
+
+// Метод А (новый, kodikwrapper): извлечь POST endpoint из atob() в JS плеера
+function extractKodikPostEndpoint(html) {
+    // Kodik хранит endpoint как: type:"POST",url:atob("base64here")
+    const m = html.match(/type\s*:\s*["']POST["'][^}]*?url\s*:\s*atob\(\s*["']([A-Za-z0-9+/=]+)["']\s*\)/i)
+           || html.match(/url\s*:\s*atob\(\s*["']([A-Za-z0-9+/=]{20,})["']\s*\)/i);
+    if (m) {
+        try {
+            const decoded = atob(m[1]);
+            if (decoded.startsWith('http') || decoded.startsWith('//')) return decoded;
+        } catch (_) {}
+    }
+    return null;
+}
+
+// Метод Б (старый): извлечь urlParams с подписанными параметрами
+function extractKodikUrlParams(html) {
+    const re = html.match(/(?:var|let|const)\s+urlParams\s*=\s*['"]((?:[^'"\\]|\\.)*)['"]/)
+            || html.match(/urlParams\s*=\s*['"]((?:[^'"\\]|\\.)*)['"]/);
+    if (!re) return null;
+    try { return JSON.parse(re[1].replace(/\\'/g, "'")); } catch (_) { return null; }
+}
+
+// Вспомогательная функция для POST к Kodik endpoint
+async function _postKodik(endpoint, body, referer) {
     try {
-        const v = atob(encoded.split('').reverse().join(''));
-        if (/\/\/.+\.(m3u8|mp4)/.test(v)) return v.startsWith('//') ? 'https:' + v : v;
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Referer': referer || endpoint,
+                'Origin': 'https://kodikplayer.com',
+            },
+            body,
+            signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) return null;
+        const text = await res.text();
+        if (text.startsWith('{')) return _extractKodikUrl(JSON.parse(text));
     } catch (_) {}
     return null;
 }
 
 async function getKodikDirectUrl(link) {
-    const params = parseKodikLink(link);
-    if (!params) return null;
+    const ep = parseKodikLink(link);
+    if (!ep) return null;
+    const embedUrl = link.startsWith('//') ? 'https:' + link : link;
+
+    // ── Метод 1: Слепой POST к известным endpoint'ам без HTML ──────────────────
+    // Работает на продакшн-домене (CORS разрешён) или через server.js прокси
+    const simpleBody = new URLSearchParams({
+        hash: ep.hash, id: ep.id, type: ep.type,
+        bad_user: 'true', cdn_is_working: 'true',
+    });
+    for (const endpoint of ['https://kodikplayer.com/ftor', 'https://kodikplayer.com/kor', 'https://kodik.info/ftor']) {
+        const u = await _postKodik(endpoint, simpleBody, embedUrl);
+        if (u) return u;
+    }
+
+    // ── Метод 2: Через локальный прокси server.js ──────────────────────────────
     try {
-        const body = new URLSearchParams({
-            ...params,
-            token: KODIK_TOKEN,
-            d: location.hostname || 'localhost',
-            pd: location.hostname || 'localhost',
-            ref: location.href,
-        });
-        const res = await fetch('https://kodik.info/gvi', {
+        const res = await fetch('/kodik-proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body
+            body: simpleBody,
+            signal: AbortSignal.timeout(6000),
         });
-        if (!res.ok) return null;
-        const data = await res.json();
-        for (const q of ['720p', '480p', '360p', '1080p']) {
-            const src = data.links?.[q]?.[0]?.src;
-            if (src) return decodeKodikUrl(src);
-        }
+        if (res.ok) { const t = await res.text(); if (t.startsWith('{')) { const u = _extractKodikUrl(JSON.parse(t)); if (u) return u; } }
     } catch (_) {}
-    return null;
-}
 
-function buildHlsPlayer(src) {
-    return `<video id="kodik-video" class="w-full h-full bg-black" controls autoplay playsinline></video>`;
+    // ── Методы 3+4: Получаем HTML embed-страницы через прокси ─────────────────
+    const html = await fetchKodikEmbedHtml(embedUrl);
+    if (!html) return null;
+
+    // Метод 3 (kodikwrapper): динамический endpoint из atob()
+    const dynEndpoint = extractKodikPostEndpoint(html);
+    if (dynEndpoint) {
+        const u = await _postKodik(
+            dynEndpoint.startsWith('//') ? 'https:' + dynEndpoint : dynEndpoint,
+            simpleBody, embedUrl
+        );
+        if (u) return u;
+    }
+
+    // Метод 4 (старый): urlParams с подписанными параметрами
+    const urlParams = extractKodikUrlParams(html);
+    if (urlParams) {
+        const signedBody = new URLSearchParams({
+            ...urlParams, type: ep.type, hash: ep.hash, id: ep.id,
+            bad_user: 'false', cdn_is_working: 'true',
+        });
+        for (const endpoint of [
+            dynEndpoint ? (dynEndpoint.startsWith('//') ? 'https:' + dynEndpoint : dynEndpoint) : null,
+            'https://kodikplayer.com/ftor',
+        ].filter(Boolean)) {
+            const u = await _postKodik(endpoint, signedBody, embedUrl);
+            if (u) return u;
+        }
+        // Через локальный прокси с подписанными параметрами
+        try {
+            const res = await fetch('/kodik-proxy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: signedBody,
+                signal: AbortSignal.timeout(6000),
+            });
+            if (res.ok) { const t = await res.text(); if (t.startsWith('{')) { const u = _extractKodikUrl(JSON.parse(t)); if (u) return u; } }
+        } catch (_) {}
+    }
+
+    return null;
 }
 
 function buildKodikFindPlayerUrl(malId, ep, translationId) {
@@ -1965,8 +2954,156 @@ function buildKodikFindPlayerUrl(malId, ep, translationId) {
     return url;
 }
 
-function initKodikPlayer() {
-    // Логика переехала в renderCurrentPlayer — прямой iframe без async
+// Заменить качество в ссылке Kodik на 480p (по исследованию: на 480p реклама не показывается)
+function toKodik480p(link) {
+    return link.replace(/\/(1080p|720p|480p|360p)(\/|$)/, '/480p$2');
+}
+
+async function initKodikPlayer() {
+    const token = ++kodikPlayerToken;
+    const player = AUTO_SERVERS[currentServerIndex];
+    if (!player || player.type !== 'kodik') return;
+
+    if (!currentKodikTranslations.length) {
+        showKodikError(true);
+        return;
+    }
+
+    const translation = currentKodikTranslations[currentKodikTranslationIdx];
+
+    const epLink = await fetchKodikEpisodeLink(currentAnime.malId, translation.id, currentEpisodeNum);
+
+    if (token !== kodikPlayerToken) return;
+    if (!document.getElementById('kodik-loading')) return;
+
+    if (!epLink) {
+        showKodikError();
+        return;
+    }
+
+    const directUrl = await getKodikDirectUrl(epLink);
+
+    if (token !== kodikPlayerToken) return;
+    if (!document.getElementById('kodik-loading')) return;
+
+    if (directUrl) {
+        loadKodikVideo(directUrl);
+    } else {
+        // Прямой URL недоступен → iframe 480p (без рекламы на 480p)
+        showKodikIframe(toKodik480p(epLink));
+    }
+}
+
+function showKodikIframe(url) {
+    const viewport = document.getElementById('player-viewport');
+    if (!viewport) return;
+    if (document.getElementById('kodik-loading')) {
+        viewport.innerHTML = buildIframe(url);
+    } else {
+        const iframe = document.getElementById('anime-iframe');
+        if (iframe) { iframe.src = url; return; }
+        viewport.innerHTML = buildIframe(url);
+    }
+    lucide.createIcons();
+}
+
+function loadKodikVideo(url) {
+    const loadingEl = document.getElementById('kodik-loading');
+    const videoEl   = document.getElementById('kodik-video');
+    const ctrlEl    = document.getElementById('kodik-controls');
+    const playerEl  = document.getElementById('kodik-direct-player');
+    if (!videoEl) return;
+
+    if (loadingEl) loadingEl.classList.add('hidden');
+    videoEl.classList.remove('hidden');
+    if (ctrlEl) ctrlEl.classList.remove('hidden');
+
+    if (kodikHls) { kodikHls.destroy(); kodikHls = null; }
+
+    const isM3u8 = !url.match(/\.(mp4|webm|ogg)(\?|$)/i);
+
+    const onFatal = () => {
+        kodikHls?.destroy(); kodikHls = null;
+        const tr = currentKodikTranslations[currentKodikTranslationIdx];
+        const fb = tr?.link ? toKodik480p(tr.link) : null;
+        if (fb) showKodikIframe(fb); else showKodikError();
+    };
+
+    if (isM3u8 && Hls.isSupported()) {
+        kodikHls = new Hls({ maxBufferLength: 30, startLevel: 0 });
+        kodikHls.loadSource(url);
+        kodikHls.attachMedia(videoEl);
+        kodikHls.once(Hls.Events.MANIFEST_PARSED, () => videoEl.play().catch(() => {}));
+        kodikHls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) onFatal(); });
+    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl') && isM3u8) {
+        videoEl.src = url; videoEl.load(); videoEl.play().catch(() => {});
+    } else {
+        videoEl.src = url; videoEl.load(); videoEl.play().catch(() => {});
+    }
+
+    // Кастомные контролы
+    videoEl.addEventListener('timeupdate', updateKodikTime);
+    videoEl.addEventListener('play',  () => updateKodikPlayBtn(false));
+    videoEl.addEventListener('pause', () => updateKodikPlayBtn(true));
+
+    const seekEl = document.getElementById('kodik-seek');
+    if (seekEl) {
+        seekEl.addEventListener('input', () => {
+            if (videoEl.duration) videoEl.currentTime = (seekEl.value / 100) * videoEl.duration;
+        });
+    }
+
+    // Клик мышью → play/pause
+    videoEl.addEventListener('click', (e) => {
+        if (e.pointerType === 'touch') return;
+        toggleKodikPlay();
+    });
+
+    // Двойное касание мобайл: лево −10с, право +10с
+    let _tCount = 0, _tSide = '', _tTimer = null;
+    videoEl.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        const touch = e.changedTouches[0];
+        if (!touch) return;
+        const rect = videoEl.getBoundingClientRect();
+        const side = touch.clientX < rect.left + rect.width / 2 ? 'left' : 'right';
+        _tCount++;
+        if (_tCount === 1) {
+            _tSide = side;
+            _tTimer = setTimeout(() => { _tCount = 0; toggleKodikPlay(); }, 280);
+        } else if (_tCount >= 2 && _tSide === side) {
+            clearTimeout(_tTimer); _tCount = 0;
+            const delta = side === 'right' ? 10 : -10;
+            videoEl.currentTime = Math.max(0, (videoEl.currentTime || 0) + delta);
+            showSeekOverlay(playerEl, side, delta);
+        } else {
+            clearTimeout(_tTimer); _tCount = 1; _tSide = side;
+            _tTimer = setTimeout(() => { _tCount = 0; toggleKodikPlay(); }, 280);
+        }
+    }, { passive: false });
+
+    // Клавиатура: ← −10с, → +10с, пробел play/pause
+    if (kodikKeyListener) { document.removeEventListener('keydown', kodikKeyListener); }
+    kodikKeyListener = (e) => {
+        if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+        if (currentSection !== 'watch') return;
+        if (AUTO_SERVERS[currentServerIndex]?.type !== 'kodik') return;
+        const v = document.getElementById('kodik-video');
+        if (!v || v.classList.contains('hidden')) return;
+        if (e.key === 'ArrowRight') {
+            v.currentTime += 10;
+            showSeekOverlay(document.getElementById('kodik-direct-player'), 'right', 10);
+            e.preventDefault();
+        } else if (e.key === 'ArrowLeft') {
+            v.currentTime = Math.max(0, v.currentTime - 10);
+            showSeekOverlay(document.getElementById('kodik-direct-player'), 'left', -10);
+            e.preventDefault();
+        } else if (e.key === ' ') {
+            toggleKodikPlay(); e.preventDefault();
+        }
+    };
+    document.addEventListener('keydown', kodikKeyListener);
+    lucide.createIcons();
 }
 
 function buildIframe(src) {
@@ -2014,13 +3151,19 @@ function nextServer() {
 
 function setServer(idx) {
     clearTimeout(window._playerErrorTimer);
+    stopLibriaGL();
+    if (libriaHls) { libriaHls.destroy(); libriaHls = null; }
+    if (kodikHls)  { kodikHls.destroy();  kodikHls  = null; }
+    if (kodikKeyListener) { document.removeEventListener('keydown', kodikKeyListener); kodikKeyListener = null; }
     currentServerIndex = idx;
     currentPlayerVoiceIdx = 0;
     const viewport = document.getElementById('player-viewport');
     if (viewport) viewport.innerHTML = renderCurrentPlayer();
     updateServerButtons();
     lucide.createIcons();
-    if (AUTO_SERVERS[idx]?.type === 'kodik') initKodikPlayer();
+    const type = AUTO_SERVERS[idx]?.type;
+    if (type === 'kodik')  initKodikPlayer();
+    if (type === 'libria') initLibriaPlayer();
 }
 
 function updateServerButtons() {
@@ -2035,11 +3178,15 @@ function updateServerButtons() {
     const player = AUTO_SERVERS[currentServerIndex] || AUTO_SERVERS[0];
     const dropdowns = document.getElementById('player-dropdowns');
     if (dropdowns) dropdowns.classList.toggle('hidden', !!player.builtinSelection);
+    const voiceWrapper = document.getElementById('kodik-voice-wrapper');
+    if (voiceWrapper) voiceWrapper.classList.toggle('hidden', player.type !== 'kodik');
     // Обновляем "В браузере"
     const openBtn = document.getElementById('open-in-browser');
     if (openBtn && currentAnime) {
         if (player.type === 'kodik' && currentKodikTranslations.length) {
             openBtn.href = currentKodikTranslations[currentKodikTranslationIdx].link;
+        } else if (player.type === 'libria') {
+            openBtn.href = 'https://www.anilibria.tv/';
         } else if (player.url) {
             openBtn.href = player.url(currentAnime.malId, currentEpisodeNum);
         }
@@ -2048,16 +3195,23 @@ function updateServerButtons() {
 
 function selectEpisode(num) {
     clearTimeout(window._playerErrorTimer);
+    stopLibriaGL();
+    if (libriaHls) { libriaHls.destroy(); libriaHls = null; }
+    if (kodikHls)  { kodikHls.destroy();  kodikHls  = null; }
+    if (kodikKeyListener) { document.removeEventListener('keydown', kodikKeyListener); kodikKeyListener = null; }
     currentEpisodeNum = num;
     const viewport = document.getElementById('player-viewport');
     if (viewport) viewport.innerHTML = renderCurrentPlayer();
     updateServerButtons();
     lucide.createIcons();
-    if (AUTO_SERVERS[currentServerIndex]?.type === 'kodik') initKodikPlayer();
+    const type = AUTO_SERVERS[currentServerIndex]?.type;
+    if (type === 'kodik')  initKodikPlayer();
+    if (type === 'libria') initLibriaPlayer();
 }
 
 function selectVoice(idx) {
     clearTimeout(window._playerErrorTimer);
+    if (kodikHls) { kodikHls.destroy(); kodikHls = null; }
     currentKodikTranslationIdx = idx;
     const viewport = document.getElementById('player-viewport');
     if (viewport) viewport.innerHTML = renderCurrentPlayer();
@@ -2079,6 +3233,533 @@ document.addEventListener('click', (e) => {
 });
 
 function setupVideoListeners() {}
+
+// ─── Kodik player controls ───────────────────────────────────────────────────
+
+function toggleKodikPlay() {
+    const v = document.getElementById('kodik-video');
+    if (!v) return;
+    v.paused ? v.play().catch(() => {}) : v.pause();
+}
+
+function updateKodikPlayBtn(isPaused) {
+    const btn = document.getElementById('kodik-play-btn');
+    if (!btn) return;
+    btn.innerHTML = isPaused
+        ? '<i data-lucide="play" class="w-5 h-5"></i>'
+        : '<i data-lucide="pause" class="w-5 h-5"></i>';
+    lucide.createIcons();
+}
+
+function updateKodikTime() {
+    const v = document.getElementById('kodik-video');
+    const timeEl = document.getElementById('kodik-time');
+    const seekEl = document.getElementById('kodik-seek');
+    if (!v || !timeEl) return;
+    const fmt = s => isFinite(s) ? `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}` : '0:00';
+    timeEl.textContent = `${fmt(v.currentTime)} / ${fmt(v.duration)}`;
+    if (seekEl && v.duration) seekEl.value = (v.currentTime / v.duration) * 100;
+}
+
+function toggleKodikMute() {
+    const v = document.getElementById('kodik-video');
+    const btn = document.getElementById('kodik-vol-btn');
+    const slider = document.getElementById('kodik-vol-slider');
+    if (!v) return;
+    v.muted = !v.muted;
+    if (slider) slider.value = v.muted ? 0 : v.volume;
+    if (btn) {
+        btn.innerHTML = v.muted
+            ? '<i data-lucide="volume-x" class="w-4 h-4"></i>'
+            : '<i data-lucide="volume-2" class="w-4 h-4"></i>';
+        lucide.createIcons();
+    }
+}
+
+function setKodikVolume(val) {
+    const v = document.getElementById('kodik-video');
+    const btn = document.getElementById('kodik-vol-btn');
+    if (!v) return;
+    const vol = parseFloat(val);
+    v.volume = vol;
+    v.muted = vol === 0;
+    if (btn) {
+        btn.innerHTML = vol === 0
+            ? '<i data-lucide="volume-x" class="w-4 h-4"></i>'
+            : '<i data-lucide="volume-2" class="w-4 h-4"></i>';
+        lucide.createIcons();
+    }
+}
+
+function setKodikSpeed(val) {
+    const v = document.getElementById('kodik-video');
+    if (v) v.playbackRate = parseFloat(val);
+}
+
+function toggleKodikFullscreen() {
+    const container = document.getElementById('kodik-direct-player');
+    if (!container) return;
+    const isCSSFS = container.classList.contains('kodik-fs');
+
+    if (document.fullscreenElement) { document.exitFullscreen?.(); return; }
+    if (isCSSFS) { _exitKodikCSSFS(container); return; }
+
+    const req = container.requestFullscreen?.() || container.webkitRequestFullscreen?.();
+    if (req && typeof req.then === 'function') {
+        req.catch(() => _enterKodikCSSFS(container));
+    } else if (!req) {
+        _enterKodikCSSFS(container);
+    }
+}
+
+function _enterKodikCSSFS(c) {
+    c.classList.add('kodik-fs');
+    document.body.style.overflow = 'hidden';
+    _updateKodikFSBtn(true);
+}
+function _exitKodikCSSFS(c) {
+    if (!c) return;
+    c.classList.remove('kodik-fs');
+    document.body.style.overflow = '';
+    _updateKodikFSBtn(false);
+}
+function _updateKodikFSBtn(isFS) {
+    const btn = document.querySelector('#kodik-controls button[onclick="toggleKodikFullscreen()"]');
+    if (!btn) return;
+    btn.innerHTML = isFS ? '<i data-lucide="minimize" class="w-4 h-4"></i>' : '<i data-lucide="maximize" class="w-4 h-4"></i>';
+    lucide.createIcons();
+}
+
+// ─── AniLibria API ────────────────────────────────────────────────────────────
+
+async function fetchAnilibriaTitle(anime) {
+    const key = anime.malId;
+    if (anilibriaCache[key] !== undefined) return anilibriaCache[key];
+
+    const queries = [anime.title, anime.titleEn, anime.titleRu]
+        .filter(Boolean)
+        .filter((v, i, a) => a.indexOf(v) === i);
+
+    for (const q of queries) {
+        try {
+            const res = await fetch(
+                `https://anilibria.top/api/v1/app/search/releases?query=${encodeURIComponent(q)}&limit=3`,
+                { signal: AbortSignal.timeout(5000) }
+            );
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+                // Получаем полные данные с эпизодами
+                const full = await fetch(
+                    `https://anilibria.top/api/v1/anime/releases/${data[0].id}`,
+                    { signal: AbortSignal.timeout(5000) }
+                );
+                if (full.ok) {
+                    const release = await full.json();
+                    anilibriaCache[key] = release;
+                    return release;
+                }
+            }
+        } catch (_) {}
+    }
+    anilibriaCache[key] = null;
+    return null;
+}
+
+async function getAnilibriaEpisodeUrl(anime, ep) {
+    const title = await fetchAnilibriaTitle(anime);
+    if (!title?.episodes?.length) return null;
+    const epData = title.episodes.find(e => e.ordinal === ep || e.ordinal === String(ep));
+    if (!epData) return null;
+    return epData.hls_1080 || epData.hls_720 || epData.hls_480 || null;
+}
+
+async function initLibriaPlayer() {
+    const token = ++libriaPlayerToken;
+    if (AUTO_SERVERS[currentServerIndex]?.type !== 'libria') return;
+
+    const url = await getAnilibriaEpisodeUrl(currentAnime, currentEpisodeNum);
+
+    if (token !== libriaPlayerToken) return;
+    if (!document.getElementById('libria-loading')) return;
+
+    if (!url) {
+        const loadingEl = document.getElementById('libria-loading');
+        const errEl = document.getElementById('libria-error');
+        if (loadingEl) loadingEl.classList.add('hidden');
+        if (errEl) { errEl.classList.remove('hidden'); lucide.createIcons(); }
+        return;
+    }
+    loadLibriaVideo(url);
+}
+
+function loadLibriaVideo(url) {
+    const loadingEl = document.getElementById('libria-loading');
+    const videoEl   = document.getElementById('libria-video');
+    const canvasEl  = document.getElementById('libria-canvas');
+    const ctrlEl    = document.getElementById('libria-controls');
+    if (!videoEl || !canvasEl) return;
+
+    if (loadingEl) loadingEl.classList.add('hidden');
+    canvasEl.classList.remove('hidden');
+    if (ctrlEl) ctrlEl.classList.remove('hidden');
+
+    stopLibriaGL();
+    if (libriaHls) { libriaHls.destroy(); libriaHls = null; }
+
+    if (Hls.isSupported()) {
+        libriaHls = new Hls({ maxBufferLength: 30 });
+        libriaHls.loadSource(url);
+        libriaHls.attachMedia(videoEl);
+        libriaHls.once(Hls.Events.MANIFEST_PARSED, () => {
+            videoEl.play().catch(() => {});
+        });
+        libriaHls.on(Hls.Events.ERROR, (e, data) => {
+            if (data.fatal) {
+                const errEl = document.getElementById('libria-error');
+                if (canvasEl) canvasEl.classList.add('hidden');
+                if (errEl) { errEl.classList.remove('hidden'); lucide.createIcons(); }
+            }
+        });
+    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+        videoEl.src = url; videoEl.load(); videoEl.play().catch(() => {});
+    }
+
+    initWebGLUpscaler(canvasEl, videoEl);
+
+    videoEl.addEventListener('timeupdate', updateLibriaTime);
+    videoEl.addEventListener('play',  () => updateLibriaPlayBtn(false));
+    videoEl.addEventListener('pause', () => updateLibriaPlayBtn(true));
+
+    const seekEl = document.getElementById('libria-seek');
+    if (seekEl) {
+        seekEl.addEventListener('input', () => {
+            if (videoEl.duration) videoEl.currentTime = (seekEl.value / 100) * videoEl.duration;
+        });
+    }
+
+    // Клик мышью → play/pause
+    canvasEl.addEventListener('click', (e) => {
+        if (e.pointerType === 'touch') return; // обрабатывается touchend
+        toggleLibriaPlay();
+    });
+
+    // Двойное касание мобайл: лево −10с, право +10с
+    let _tapCount = 0, _tapSide = '', _tapTimer = null;
+    canvasEl.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        const touch = e.changedTouches[0];
+        if (!touch) return;
+        const rect = canvasEl.getBoundingClientRect();
+        const side = touch.clientX < rect.left + rect.width / 2 ? 'left' : 'right';
+
+        _tapCount++;
+        if (_tapCount === 1) {
+            _tapSide = side;
+            _tapTimer = setTimeout(() => { _tapCount = 0; toggleLibriaPlay(); }, 280);
+        } else if (_tapCount >= 2 && _tapSide === side) {
+            clearTimeout(_tapTimer); _tapCount = 0;
+            const delta = side === 'right' ? 10 : -10;
+            videoEl.currentTime = Math.max(0, (videoEl.currentTime || 0) + delta);
+            showSeekOverlay(canvasEl.parentElement, side, delta);
+        } else {
+            clearTimeout(_tapTimer); _tapCount = 1; _tapSide = side;
+            _tapTimer = setTimeout(() => { _tapCount = 0; toggleLibriaPlay(); }, 280);
+        }
+    }, { passive: false });
+
+    // Клавиатура: ← −10с, → +10с, пробел play/pause
+    libriaKeyListener = (e) => {
+        if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+        if (currentSection !== 'watch') return;
+        if (AUTO_SERVERS[currentServerIndex]?.type !== 'libria') return;
+        const v = document.getElementById('libria-video');
+        if (!v) return;
+        const player = document.getElementById('libria-player');
+        if (e.key === 'ArrowRight') {
+            v.currentTime += 10;
+            showSeekOverlay(player, 'right', 10);
+            e.preventDefault();
+        } else if (e.key === 'ArrowLeft') {
+            v.currentTime = Math.max(0, v.currentTime - 10);
+            showSeekOverlay(player, 'left', -10);
+            e.preventDefault();
+        } else if (e.key === ' ') {
+            toggleLibriaPlay();
+            e.preventDefault();
+        }
+    };
+    document.addEventListener('keydown', libriaKeyListener);
+}
+
+function stopLibriaGL() {
+    if (libriaRafId) { cancelAnimationFrame(libriaRafId); libriaRafId = null; }
+    libriaGlContext = null;
+    if (libriaKeyListener) { document.removeEventListener('keydown', libriaKeyListener); libriaKeyListener = null; }
+}
+
+// Оверлей +10 / -10 секунд
+function showSeekOverlay(parent, side, delta) {
+    if (!parent) return;
+    const el = document.createElement('div');
+    el.style.cssText = `position:absolute;${side==='right'?'right:12%':'left:12%'};top:50%;transform:translateY(-50%);` +
+        `background:rgba(0,0,0,0.55);border-radius:50%;width:60px;height:60px;` +
+        `display:flex;flex-direction:column;align-items:center;justify-content:center;` +
+        `pointer-events:none;z-index:50;color:white;opacity:1;transition:opacity 0.4s ease;`;
+    el.innerHTML = `<span style="font-size:1.1rem;line-height:1">${delta>0?'▶▶':'◀◀'}</span>` +
+        `<span style="font-size:10px;font-weight:bold;margin-top:3px">${delta>0?'+':''}${delta}s</span>`;
+    parent.appendChild(el);
+    setTimeout(() => { el.style.opacity = '0'; }, 350);
+    setTimeout(() => el.remove(), 750);
+}
+
+// ─── WebGL 4K Upscaler ────────────────────────────────────────────────────────
+
+function createGLProgram(gl, vsSource, fsSource) {
+    const compile = (type, src) => {
+        const s = gl.createShader(type);
+        gl.shaderSource(s, src);
+        gl.compileShader(s);
+        return gl.getShaderParameter(s, gl.COMPILE_STATUS)
+            ? s : (console.warn('Shader error:', gl.getShaderInfoLog(s)), null);
+    };
+    const vs = compile(gl.VERTEX_SHADER, vsSource);
+    const fs = compile(gl.FRAGMENT_SHADER, fsSource);
+    if (!vs || !fs) return null;
+    const p = gl.createProgram();
+    gl.attachShader(p, vs); gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    return gl.getProgramParameter(p, gl.LINK_STATUS) ? p
+        : (console.warn('Program error:', gl.getProgramInfoLog(p)), null);
+}
+
+function initWebGLUpscaler(canvas, video) {
+    stopLibriaGL();
+
+    const container = canvas.parentElement;
+    canvas.width  = container?.clientWidth  || 1280;
+    canvas.height = container?.clientHeight || 720;
+
+    const gl = canvas.getContext('webgl', { antialias: false, preserveDrawingBuffer: false });
+    if (!gl) {
+        // CSS-фоллбек
+        video.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;filter:contrast(1.05) saturate(1.1);';
+        canvas.classList.add('hidden');
+        return;
+    }
+    libriaGlContext = gl;
+
+    const vsSource = `
+        attribute vec2 a_pos;
+        attribute vec2 a_uv;
+        varying vec2 v_uv;
+        void main(){ gl_Position=vec4(a_pos,0.0,1.0); v_uv=a_uv; }
+    `;
+    const fsSource = `
+        precision highp float;
+        uniform sampler2D u_tex;
+        uniform vec2 u_res;
+        varying vec2 v_uv;
+        void main(){
+            vec4 c = texture2D(u_tex, v_uv);
+            float px=1.0/u_res.x, py=1.0/u_res.y;
+            // Gaussian blur (для unsharp mask)
+            vec4 b =
+                texture2D(u_tex,v_uv+vec2(-px,-py))*0.0625 +
+                texture2D(u_tex,v_uv+vec2(  0,-py))*0.125  +
+                texture2D(u_tex,v_uv+vec2( px,-py))*0.0625 +
+                texture2D(u_tex,v_uv+vec2(-px,  0))*0.125  +
+                c                                  *0.25   +
+                texture2D(u_tex,v_uv+vec2( px,  0))*0.125  +
+                texture2D(u_tex,v_uv+vec2(-px, py))*0.0625 +
+                texture2D(u_tex,v_uv+vec2(  0, py))*0.125  +
+                texture2D(u_tex,v_uv+vec2( px, py))*0.0625;
+            // Unsharp mask (резкость)
+            vec4 sharp = clamp(c + 0.65*(c - b), 0.0, 1.0);
+            // Лёгкий контраст
+            sharp = clamp(sharp*1.04 - vec4(0.02,0.02,0.02,0.0), 0.0, 1.0);
+            // Насыщенность
+            float lum = dot(sharp.rgb, vec3(0.299,0.587,0.114));
+            sharp.rgb = mix(vec3(lum), sharp.rgb, 1.15);
+            gl_FragColor = clamp(sharp, 0.0, 1.0);
+        }
+    `;
+
+    const prog = createGLProgram(gl, vsSource, fsSource);
+    if (!prog) {
+        stopLibriaGL();
+        video.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;filter:contrast(1.05) saturate(1.1);';
+        canvas.classList.add('hidden');
+        return;
+    }
+    gl.useProgram(prog);
+
+    const posBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+
+    const uvBuf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,1, 1,1, 0,0, 1,0]), gl.STATIC_DRAW);
+
+    const aPos = gl.getAttribLocation(prog, 'a_pos');
+    const aUv  = gl.getAttribLocation(prog, 'a_uv');
+    const uTex = gl.getUniformLocation(prog, 'u_tex');
+    const uRes = gl.getUniformLocation(prog, 'u_res');
+
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.uniform1i(uTex, 0);
+
+    const captureGl = gl;
+
+    function frame() {
+        if (libriaGlContext !== captureGl) return;
+
+        const w = Math.max(1, canvas.clientWidth);
+        const h = Math.max(1, canvas.clientHeight);
+        if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+
+        if (video.readyState >= 2) {
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            try {
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+            } catch (_) { /* cross-origin fallback */ }
+        }
+
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.uniform2f(uRes, canvas.width, canvas.height);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+        gl.enableVertexAttribArray(aPos);
+        gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+        gl.enableVertexAttribArray(aUv);
+        gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 0, 0);
+
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        libriaRafId = requestAnimationFrame(frame);
+    }
+    libriaRafId = requestAnimationFrame(frame);
+}
+
+// ─── Libria player controls ───────────────────────────────────────────────────
+
+function toggleLibriaPlay() {
+    const v = document.getElementById('libria-video');
+    if (!v) return;
+    v.paused ? v.play().catch(() => {}) : v.pause();
+}
+
+function toggleLibriaMute() {
+    const v = document.getElementById('libria-video');
+    const btn = document.getElementById('libria-vol-btn');
+    const slider = document.getElementById('libria-vol-slider');
+    if (!v) return;
+    v.muted = !v.muted;
+    if (slider) slider.value = v.muted ? 0 : v.volume;
+    if (btn) {
+        btn.innerHTML = v.muted
+            ? '<i data-lucide="volume-x" class="w-4 h-4"></i>'
+            : '<i data-lucide="volume-2" class="w-4 h-4"></i>';
+        lucide.createIcons();
+    }
+}
+
+function updateLibriaPlayBtn(isPaused) {
+    const btn = document.getElementById('libria-play-btn');
+    if (!btn) return;
+    btn.innerHTML = isPaused
+        ? '<i data-lucide="play" class="w-5 h-5"></i>'
+        : '<i data-lucide="pause" class="w-5 h-5"></i>';
+    lucide.createIcons();
+}
+
+function updateLibriaTime() {
+    const v = document.getElementById('libria-video');
+    const timeEl = document.getElementById('libria-time');
+    const seekEl = document.getElementById('libria-seek');
+    if (!v || !timeEl) return;
+    const fmt = s => isFinite(s) ? `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}` : '0:00';
+    timeEl.textContent = `${fmt(v.currentTime)} / ${fmt(v.duration)}`;
+    if (seekEl && v.duration) seekEl.value = (v.currentTime / v.duration) * 100;
+}
+
+function setLibriaVolume(val) {
+    const v = document.getElementById('libria-video');
+    const btn = document.getElementById('libria-vol-btn');
+    if (!v) return;
+    const vol = parseFloat(val);
+    v.volume = vol;
+    v.muted = vol === 0;
+    if (btn) {
+        btn.innerHTML = vol === 0
+            ? '<i data-lucide="volume-x" class="w-4 h-4"></i>'
+            : '<i data-lucide="volume-2" class="w-4 h-4"></i>';
+        lucide.createIcons();
+    }
+}
+
+function setLibriaSpeed(val) {
+    const v = document.getElementById('libria-video');
+    if (v) v.playbackRate = parseFloat(val);
+}
+
+function toggleLibriaFullscreen() {
+    const container = document.getElementById('libria-player');
+    if (!container) return;
+    const isCSSFS = container.classList.contains('libria-fs');
+
+    if (document.fullscreenElement) {
+        document.exitFullscreen?.();
+        return;
+    }
+    if (isCSSFS) { _exitLibriaCSSFS(container); return; }
+
+    // Пробуем нативный fullscreen
+    const req = container.requestFullscreen?.() ||
+                container.webkitRequestFullscreen?.() ||
+                container.mozRequestFullScreen?.();
+    if (req && typeof req.then === 'function') {
+        req.catch(() => _enterLibriaCSSFS(container));
+    } else if (!req) {
+        _enterLibriaCSSFS(container); // iOS Safari — CSS fallback
+    }
+}
+
+function _enterLibriaCSSFS(c) {
+    c.classList.add('libria-fs');
+    document.body.style.overflow = 'hidden';
+    _updateLibriaFSBtn(true);
+}
+function _exitLibriaCSSFS(c) {
+    c.classList.remove('libria-fs');
+    document.body.style.overflow = '';
+    _updateLibriaFSBtn(false);
+}
+function _updateLibriaFSBtn(isFullscreen) {
+    const btn = document.querySelector('#libria-controls button[onclick="toggleLibriaFullscreen()"]');
+    if (!btn) return;
+    btn.innerHTML = isFullscreen
+        ? '<i data-lucide="minimize" class="w-4 h-4"></i>'
+        : '<i data-lucide="maximize" class="w-4 h-4"></i>';
+    lucide.createIcons();
+}
+
+// Обработка выхода из нативного fullscreen (ESC)
+document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement) {
+        const lc = document.getElementById('libria-player');
+        if (lc) _exitLibriaCSSFS(lc);
+        const kc = document.getElementById('kodik-direct-player');
+        if (kc) _exitKodikCSSFS(kc);
+    }
+});
 
 
 // ─── Dark mode ────────────────────────────────────────────────────────────────
@@ -2134,7 +3815,7 @@ function triggerMobileSearch() {
 
 function updateMobileNavActive(section) {
     document.querySelectorAll('.mobile-nav-btn').forEach(btn => btn.classList.remove('active'));
-    const navIds = { home: 'mob-nav-home', catalog: 'mob-nav-catalog' };
+    const navIds = { home: 'mob-nav-home', profile: 'mob-nav-account' };
     const id = navIds[section];
     if (id) document.getElementById(id)?.classList.add('active');
 }
@@ -2199,8 +3880,8 @@ function openAdminModal() {
     const langInfo = document.getElementById('admin-lang-info');
     if (langInfo) {
         langInfo.textContent = TRANSLATE_TO
-            ? `Синопсисы переводятся на "${TRANSLATE_TO}" (выбранный язык)`
-            : 'Синопсисы на английском (язык: EN)';
+            ? `${t('admin_lang_auto')}: "${TRANSLATE_TO}"`
+            : 'EN';
     }
     lucide.createIcons();
 }
@@ -2234,25 +3915,25 @@ function renderAdminStats() {
     }
     const users = Object.keys(getStoredUsers()).length;
     panel.innerHTML = `
-        <h4 class="font-bold text-gray-900 dark:text-white mb-4">Статистика сайта</h4>
+        <h4 class="font-bold text-gray-900 dark:text-white mb-4">${t('admin_stats_title')}</h4>
         <div class="grid grid-cols-2 gap-3 mb-3">
             <div class="bg-gray-50 dark:bg-[#2a2a2a] rounded-2xl p-4 text-center">
                 <p class="text-3xl font-bold text-airbnb">${totalComments}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Комментариев</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${t('admin_comments_count')}</p>
             </div>
             <div class="bg-gray-50 dark:bg-[#2a2a2a] rounded-2xl p-4 text-center">
                 <p class="text-3xl font-bold text-airbnb">${commentedAnime}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Аниме с отзывами</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${t('admin_reviewed_anime')}</p>
             </div>
             <div class="bg-gray-50 dark:bg-[#2a2a2a] rounded-2xl p-4 text-center">
                 <p class="text-3xl font-bold text-airbnb">${users}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Пользователей</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">${t('admin_users_count')}</p>
             </div>
         </div>
         <div class="bg-gray-50 dark:bg-[#2a2a2a] rounded-2xl p-4 flex items-center justify-between">
             <div>
-                <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">Аниме в кэше</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Загружено из MyAnimeList</p>
+                <p class="text-sm font-semibold text-gray-700 dark:text-gray-300">${t('admin_cached_anime')}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">${t('admin_cached_sub')}</p>
             </div>
             <p class="text-2xl font-bold text-airbnb">${animeData.length}</p>
         </div>
@@ -2260,14 +3941,14 @@ function renderAdminStats() {
 }
 
 function adminClearComments() {
-    if (!confirm('Удалить все комментарии? Действие необратимо.')) return;
+    if (!confirm(t('admin_clear_confirm'))) return;
     const keys = [];
     for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (k?.startsWith('anime_comments_')) keys.push(k);
     }
     keys.forEach(k => localStorage.removeItem(k));
-    showAdminDataStatus('Все комментарии удалены.');
+    showAdminDataStatus(t('admin_cleared'));
 }
 
 
@@ -2295,9 +3976,9 @@ function adminImportData(event) {
         try {
             const data = JSON.parse(e.target.result);
             Object.entries(data).forEach(([k, v]) => localStorage.setItem(k, v));
-            showAdminDataStatus('Данные успешно импортированы.');
+            showAdminDataStatus(t('admin_imported'));
         } catch (_) {
-            showAdminDataStatus('Ошибка: неверный формат файла.');
+            showAdminDataStatus(t('admin_import_err'));
         }
     };
     reader.readAsText(file);
@@ -2318,31 +3999,22 @@ const USE_HASH = true; // static server — always hash-based so refresh works
 
 function updateAnimeUrl(malId) {
     const padded = String(malId).padStart(9, '0');
-    if (USE_HASH) {
-        history.pushState({ animeId: malId }, '', '#' + padded);
-    } else {
-        history.pushState({ animeId: malId }, '', '/' + padded);
-    }
+    history.pushState({ animeId: malId }, '', '#' + padded);
     document.title = currentAnime ? `${currentAnime.displayTitle} — AnyRainy` : 'AnyRainy';
 }
 
 function clearAnimeUrl() {
-    if (USE_HASH) {
-        if (location.hash) history.pushState({}, '', location.pathname);
-    } else {
-        if (location.pathname !== '/') history.pushState({}, '', '/');
-    }
+    if (location.hash) history.pushState({}, '', location.pathname);
     document.title = 'AnyRainy';
 }
 
-function getRouteAnimeId() {
-    if (USE_HASH) {
-        const hash = location.hash.replace('#', '');
-        return /^\d+$/.test(hash) ? parseInt(hash, 10) : null;
-    } else {
-        const path = location.pathname.replace(/^\//, '');
-        return /^\d+$/.test(path) ? parseInt(path, 10) : null;
-    }
+function getRouteInfo() {
+    const hash = location.hash.replace('#', '');
+    if (/^\d+$/.test(hash)) return { type: 'anime', malId: parseInt(hash, 10) };
+    if (hash === 'profile') return { type: 'profile', username: null };
+    const profileMatch = hash.match(/^profile\/(.+)$/);
+    if (profileMatch) return { type: 'profile', username: decodeURIComponent(profileMatch[1]) };
+    return { type: 'home' };
 }
 
 async function fetchAndWatchByMalId(malId) {
@@ -2372,9 +4044,11 @@ async function fetchAndWatchByMalId(malId) {
 
 // Кнопки назад/вперёд в браузере
 window.addEventListener('popstate', () => {
-    const malId = getRouteAnimeId();
-    if (malId) {
-        fetchAndWatchByMalId(malId);
+    const info = getRouteInfo();
+    if (info.type === 'anime') {
+        fetchAndWatchByMalId(info.malId);
+    } else if (info.type === 'profile') {
+        showProfilePage(info.username);
     } else {
         currentAnime = null;
         showSection('home');
@@ -2392,12 +4066,15 @@ setupInfiniteCatalogLoading();
 
 // Проверяем URL при загрузке страницы
 (async () => {
-    const malId = getRouteAnimeId();
-    if (malId) {
-        // Ждём начальной загрузки данных, потом открываем аниме
+    const info = getRouteInfo();
+    if (info.type === 'anime') {
         showSection('home');
         await new Promise(r => setTimeout(r, 100));
-        await fetchAndWatchByMalId(malId);
+        await fetchAndWatchByMalId(info.malId);
+    } else if (info.type === 'profile') {
+        showSection('home');
+        await new Promise(r => setTimeout(r, 50));
+        showProfilePage(info.username);
     } else {
         showSection('home');
     }
