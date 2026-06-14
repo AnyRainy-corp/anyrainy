@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash('@ *)",
+      "Bash(Out-File -FilePath 'L:\\\\claudfiles\\\\config.json' -Encoding utf8)",
+      "PowerShell(Start-Process -FilePath 'L:\\\\claudfiles\\\\xray.exe' -ArgumentList '-c \"L:\\\\claudfiles\\\\config.json\"' -NoNewWindow -RedirectStandardOutput 'L:\\\\claudfiles\\\\xray.log' -RedirectStandardError 'L:\\\\claudfiles\\\\xray_err.log')",
+      "PowerShell(\"Xray started. Waiting 2 sec for startup...\")"
+    ]
+  }
+}

@@ -39,20 +39,80 @@ let authMode = 'login';
 let currentUser = null;
 let selectedGenres = new Set();
 let genreFilterOpen = false;
+let sortPanelOpen = false;
 let genreSearchQ = '';
 let genreFilterMode = 'all'; // 'all' | 'any'
 let commentReplyTo = null;
 let currentProfileUsername = null;
 let currentCatalogQueryTranslated = '';
+let ongoingAnime = [];
+let ongoingLoading = false;
+let ongoingPagesLoaded = 1;
+let ongoingLoadFailed = false;
+let ongoingDataSource = '';
+
+// Player quality state
+let kodikQualityMap    = {};   // { '1080p': url, '720p': url, ... }
+let kodikCurrentQuality = '';
+let libriaQualityMap   = {};   // { '1080p': url, '720p': url, '480p': url, '4K ✦': url }
+let libriaQualityEp    = 0;
+let libriaCurrentQuality = '';
+let libriaUpscale4K    = false;
+let kodikUpscaleHD     = false;  // '1080p ✦' — WebGL-апскейл 720p в Kodik
+// Auto-hide timers
+let kodikControlsTimer  = null;
+let libriaControlsTimer = null;
+
+// Player fit mode: 'contain' | 'cover' | 'stretch'
+let playerFitMode = 'contain'; // AR-коррекция шейдера; масштаб/выравнивание — playerZoom/playerStretch
+
+// Плеер: «начать просмотр» до первого запуска; состояние перемотки
+const playerPlaybackStarted = { kodik: false, libria: false };
+const _seekDragging = { kodik: false, libria: false };
+const _wasPlayingBeforeSeek = { kodik: false, libria: false };
+const _pendingSeekPct = { kodik: null, libria: null };
+const playerBufferState = {
+    kodik:  { buffering: false, loadingFrag: false, speedBps: 0 },
+    libria: { buffering: false, loadingFrag: false, speedBps: 0 },
+};
+
+// Home carousels (rows) — каждая категория тянет данные из Jikan
+let topRowAnime = [];
+let popularRowAnime = [];
+const rowLoadState = { ongoing: false, top: false, popular: false };
+const rowFailed = { ongoing: false, top: false, popular: false };
+const ROW_LIMIT = 16;
+// Текущая открытая категория в секции «Смотреть все»
+let listCategory = 'top';
 
 const PAGE_SIZE = 24;
+const ONGOING_PAGE_SIZE = 16;
 const AUTH_STORAGE_KEY = 'anistream_users';
+const WATCH_HISTORY_KEY = 'anyrainy_watch_history';
+const MAX_WATCH_HISTORY = 12;
 
 // Language: stored in cookie, default RU
 let currentLang = getCookie('anyrainy_lang') || 'ru';
 let TRANSLATE_TO = currentLang === 'en' ? null : currentLang;
 
 const synopsisCache = {};
+
+// ─── Прокси картинок (обход DPI-блокировки CDN постеров в РФ) ─────────────────
+// Постеры с MAL/Shikimori/AniLibria часто не грузятся в браузере без VPN,
+// но локальный Node-сервер их скачивает. Проксируем через /img.
+const IMG_PROXY_HOSTS = /(myanimelist\.net|shikimori\.(one|io)|anilibria\.(top|tv)|kodikres\.com|kodik\.biz|images\.unsplash\.com)/i;
+
+function proxyImg(rawUrl) {
+    if (!rawUrl) return '';
+    let url = String(rawUrl);
+    if (url.startsWith('//')) url = 'https:' + url;
+    if (url.startsWith('data:') || url.includes('/img?url=')) return url;
+    const onLocal = ['localhost', '127.0.0.1', ''].includes(location.hostname);
+    if (onLocal && IMG_PROXY_HOSTS.test(url)) {
+        return `/img?url=${encodeURIComponent(url)}`;
+    }
+    return url;
+}
 
 // ─── Escape HTML ──────────────────────────────────────────────────────────────
 
@@ -63,6 +123,357 @@ function escapeHtml(value = '') {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+// ─── Toasts ───────────────────────────────────────────────────────────────────
+
+let toastTimer = null;
+
+function showToast(message, type = 'default') {
+    const root = document.getElementById('toast-root');
+    if (!root || !message) return;
+    clearTimeout(toastTimer);
+    root.innerHTML = `
+        <div class="toast toast--${type}" role="status">
+            <span class="toast-icon">${type === 'success' ? '✓' : type === 'error' ? '!' : '☁'}</span>
+            <span class="toast-msg">${escapeHtml(message)}</span>
+        </div>`;
+    root.classList.add('toast-root--visible');
+    toastTimer = setTimeout(() => {
+        root.classList.remove('toast-root--visible');
+        setTimeout(() => { if (root) root.innerHTML = ''; }, 320);
+    }, 2800);
+}
+
+// ─── Watch history ────────────────────────────────────────────────────────────
+
+function getWatchHistory() {
+    try { return JSON.parse(localStorage.getItem(WATCH_HISTORY_KEY) || '[]'); }
+    catch (_) { return []; }
+}
+
+function saveWatchProgress(anime, episodeOverride) {
+    if (!anime?.id) return;
+    const server = getActiveServers()[currentServerIndex];
+    const tr = currentKodikTranslations[currentKodikTranslationIdx];
+    let position = 0;
+    const playerType = server?.type;
+    if (playerType === 'kodik') {
+        position = document.getElementById('kodik-video')?.currentTime || 0;
+    } else if (playerType === 'libria') {
+        position = document.getElementById('libria-video')?.currentTime || 0;
+    }
+
+    const entry = {
+        id: anime.id,
+        malId: anime.malId,
+        title: anime.title,
+        titleRu: anime.titleRu,
+        titleEn: anime.titleEn,
+        displayTitle: anime.displayTitle,
+        image: anime.image,
+        rating: anime.rating,
+        episodes: anime.episodes,
+        episode: episodeOverride ?? currentEpisodeNum,
+        serverIndex: currentServerIndex,
+        serverType: server?.key || server?.type || 'kodik',
+        serverName: server?.name || '',
+        kodikTranslationIdx: currentKodikTranslationIdx,
+        kodikTranslationTitle: tr?.title || '',
+        libriaQuality: libriaCurrentQuality || '',
+        kodikQuality: kodikCurrentQuality || '',
+        position: Math.max(0, Math.floor(position)),
+        watchedAt: Date.now(),
+    };
+    const list = getWatchHistory().filter(h => h.id !== anime.id);
+    list.unshift(entry);
+    localStorage.setItem(WATCH_HISTORY_KEY, JSON.stringify(list.slice(0, MAX_WATCH_HISTORY)));
+}
+
+let watchProgressSaveTimer = null;
+function scheduleWatchProgressSave() {
+    clearTimeout(watchProgressSaveTimer);
+    watchProgressSaveTimer = setTimeout(() => {
+        if (currentAnime && currentSection === 'watch') saveWatchProgress(currentAnime);
+    }, 4000);
+}
+
+function clampResumeServerIndex(idx, serverType) {
+    const servers = getActiveServers();
+    if (typeof idx === 'number' && idx >= 0 && idx < servers.length) {
+        if (!serverType || servers[idx]?.type === serverType || servers[idx]?.key === serverType) return idx;
+    }
+    if (serverType) {
+        const found = servers.findIndex(s => s.type === serverType || s.key === serverType);
+        if (found >= 0) return found;
+    }
+    return typeof idx === 'number' && idx >= 0 && idx < servers.length ? idx : 0;
+}
+
+function applySavedKodikVoice(resume) {
+    if (!resume || !currentKodikTranslations.length) return;
+    let idx = -1;
+    if (resume.kodikTranslationTitle) {
+        idx = currentKodikTranslations.findIndex(t => t.title === resume.kodikTranslationTitle);
+    }
+    if (idx < 0 && resume.kodikTranslationIdx != null) {
+        idx = resume.kodikTranslationIdx;
+    }
+    if (idx >= 0 && idx < currentKodikTranslations.length) {
+        currentKodikTranslationIdx = idx;
+    }
+    ensureKodikTranslationForPlayer();
+}
+
+function applyResumePosition(prefix) {
+    const pos = window._resumePosition;
+    if (!pos || pos <= 0) return;
+    window._resumePosition = null;
+    const videoEl = getPlayerVideo(prefix);
+    if (!videoEl) return;
+    const apply = () => seekVideoTo(prefix, videoEl, pos);
+    if (videoEl.readyState >= 1 && videoEl.duration) apply();
+    else videoEl.addEventListener('loadedmetadata', apply, { once: true });
+}
+
+function clearWatchHistory() {
+    localStorage.removeItem(WATCH_HISTORY_KEY);
+    renderContinueWatching();
+    showToast(t('toast_history_cleared'));
+}
+
+function getContinueDisplayTitle(entry) {
+    if (currentLang === 'en') return entry.titleEn || entry.title || entry.displayTitle;
+    const cached = entry.malId ? getCachedRuTitle(entry.malId) : null;
+    return cached || entry.titleRu || entry.displayTitle || entry.title;
+}
+
+function renderContinueCards(items) {
+    return items.map(entry => {
+        const title = getContinueDisplayTitle(entry);
+        const total = entry.episodes || entry.episode || 1;
+        const pct = Math.min(100, Math.round((entry.episode / total) * 100));
+        const meta = [entry.serverName, t('continue_ep', entry.episode)].filter(Boolean).join(' · ');
+        return `
+        <article class="ongoing-card anim-item cursor-pointer group" onclick="resumeWatch(${entry.id})">
+            <div class="relative aspect-[3/4] overflow-hidden rounded-xl bg-gray-100 dark:bg-gray-800 mb-2.5">
+                <img src="${proxyImg(entry.image)}" alt="${escapeHtml(title)}"
+                     class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                     loading="lazy">
+                <div class="absolute top-2 left-2 px-2 py-1 rounded-lg bg-black/55 backdrop-blur-md text-white text-[11px] font-semibold max-w-[90%] truncate">
+                    ${escapeHtml(meta)}
+                </div>
+                <div class="absolute bottom-0 inset-x-0 h-1 bg-black/40">
+                    <div class="h-full bg-airbnb transition-all duration-500" style="width:${pct}%"></div>
+                </div>
+            </div>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white line-clamp-2 leading-snug min-h-[2.5rem]">${escapeHtml(title)}</h3>
+        </article>`;
+    }).join('');
+}
+
+function renderContinueWatching() {
+    const section = document.getElementById('continue-section');
+    const track = document.getElementById('continue-track');
+    if (!section || !track) return;
+    const items = getWatchHistory();
+    if (!items.length) {
+        section.classList.add('hidden');
+        track.innerHTML = '';
+        return;
+    }
+    section.classList.remove('hidden');
+    track.innerHTML = renderContinueCards(items);
+    lucide.createIcons();
+    staggerAnimItems(track);
+    if (currentLang === 'ru') enrichWithRussianTitles(items);
+}
+
+async function resumeWatch(id) {
+    const entry = getWatchHistory().find(h => h.id === id);
+    if (!entry) return;
+    if (!findAnimeById(id)) {
+        animeData.push({
+            id: entry.id,
+            malId: entry.malId,
+            title: entry.title,
+            titleRu: entry.titleRu,
+            titleEn: entry.titleEn,
+            displayTitle: entry.displayTitle,
+            image: entry.image,
+            rating: entry.rating,
+            episodes: entry.episodes,
+            tags: [],
+        });
+    }
+    await watchAnime(id, { resume: entry });
+}
+
+function copyAnimeLink() {
+    if (!currentAnime?.malId) return;
+    const url = `${location.origin}${location.pathname}#${String(currentAnime.malId).padStart(9, '0')}`;
+    const done = () => showToast(t('toast_link_copied'), 'success');
+    const fail = () => showToast(t('toast_copy_failed'), 'error');
+    if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(url).then(done).catch(fail);
+    } else {
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        ta.style.cssText = 'position:fixed;opacity:0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy') ? done() : fail(); } catch (_) { fail(); }
+        ta.remove();
+    }
+}
+
+function isTypingTarget() {
+    const el = document.activeElement;
+    return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+}
+
+function focusSearchInput() {
+    const navInput = document.getElementById('nav-search-input');
+    const bigInput = document.getElementById('big-search-input');
+    if (currentSection === 'home' && bigInput) {
+        bigInput.focus();
+        bigInput.select();
+    } else if (navInput) {
+        navInput.focus();
+        navInput.select();
+    } else {
+        openMobileSearch();
+        setTimeout(() => document.getElementById('mobile-search-input')?.focus(), 80);
+    }
+}
+
+function selectAdjacentEpisode(delta) {
+    if (!currentAnime) return;
+    const epNums = currentKodikEpisodeNums.length
+        ? currentKodikEpisodeNums
+        : Array.from({ length: currentAnime.episodes || 1 }, (_, i) => i + 1);
+    const idx = epNums.indexOf(currentEpisodeNum);
+    const next = idx >= 0 ? epNums[idx + delta] : null;
+    if (next) selectEpisode(next);
+}
+
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            if (document.getElementById('franchise-modal')?.classList.contains('is-open')) closeFranchiseModal();
+            else if (document.getElementById('youtube-modal')?.classList.contains('is-open')) closeYoutubeModal();
+            else if (!document.getElementById('auth-modal')?.classList.contains('hidden')) closeAuthModal();
+            else if (!document.getElementById('favorites-modal')?.classList.contains('hidden')) closeFavorites();
+            else if (!document.getElementById('admin-panel-modal')?.classList.contains('hidden')) closeAdminModal();
+            else if (!document.getElementById('mobile-search-overlay')?.classList.contains('hidden')) closeMobileSearch();
+            return;
+        }
+        if (e.key === '/' && !isTypingTarget()) {
+            e.preventDefault();
+            focusSearchInput();
+            return;
+        }
+        if (handleWatchPlayerKeys(e)) return;
+        if (currentSection !== 'watch' || !currentAnime || isTypingTarget()) return;
+        if (e.key === '[') { e.preventDefault(); selectAdjacentEpisode(-1); }
+        if (e.key === ']') { e.preventDefault(); selectAdjacentEpisode(1); }
+    });
+}
+
+function getActivePlayerPrefix() {
+    const type = getActiveServers()[currentServerIndex]?.type;
+    if (type === 'kodik') return 'kodik';
+    if (type === 'libria') return 'libria';
+    return null;
+}
+
+function handleWatchPlayerKeys(e) {
+    if (currentSection !== 'watch' || isTypingTarget()) return false;
+    const prefix = getActivePlayerPrefix();
+    if (!prefix) return false;
+    const videoEl = getPlayerVideo(prefix);
+    if (!videoEl) return false;
+    if (prefix === 'kodik') {
+        const el = document.getElementById('kodik-video');
+        if (!el || el.classList.contains('hidden')) return false;
+    }
+    const playerRoot = document.getElementById(prefix === 'kodik' ? 'kodik-direct-player' : 'libria-player');
+    if (e.ctrlKey || e.altKey || e.metaKey) return false;
+    const code = e.code;
+
+    // Перемотка: ← / J  и  → / L
+    if (code === 'ArrowLeft' || code === 'KeyJ') {
+        e.preventDefault();
+        seekVideoByDelta(prefix, videoEl, -10);
+        showSeekOverlay(playerRoot, 'left', -10);
+        return true;
+    }
+    if (code === 'ArrowRight' || code === 'KeyL') {
+        e.preventDefault();
+        seekVideoByDelta(prefix, videoEl, 10);
+        showSeekOverlay(playerRoot, 'right', 10);
+        return true;
+    }
+    // Пауза/воспроизведение: пробел / K
+    if (code === 'Space' || code === 'KeyK') {
+        e.preventDefault();
+        if (prefix === 'kodik') toggleKodikPlay(); else toggleLibriaPlay();
+        return true;
+    }
+    // Громкость: ↑ / ↓
+    if (code === 'ArrowUp' || code === 'ArrowDown') {
+        e.preventDefault();
+        const nv = playerAdjustVolume(prefix, videoEl, code === 'ArrowUp' ? 0.1 : -0.1);
+        flashPlayerHint(playerRoot, `<i data-lucide="${nv === 0 ? 'volume-x' : 'volume-2'}" style="width:20px;height:20px"></i><b>${Math.round(nv * 100)}%</b>`);
+        return true;
+    }
+    // Без звука: M
+    if (code === 'KeyM') {
+        e.preventDefault();
+        if (prefix === 'kodik') toggleKodikMute(); else toggleLibriaMute();
+        flashPlayerHint(playerRoot, `<i data-lucide="${videoEl.muted ? 'volume-x' : 'volume-2'}" style="width:22px;height:22px"></i>`);
+        return true;
+    }
+    // Полноэкранный режим: F
+    if (code === 'KeyF') {
+        e.preventDefault();
+        if (prefix === 'kodik') toggleKodikFullscreen(); else toggleLibriaFullscreen();
+        return true;
+    }
+    // Цифры 0–9 → переход к проценту длительности
+    if (/^Digit[0-9]$/.test(code) && isFinite(videoEl.duration) && videoEl.duration > 0) {
+        e.preventDefault();
+        const pct = parseInt(code.slice(5), 10) / 10;
+        seekVideoTo(prefix, videoEl, videoEl.duration * pct);
+        if (!playerPlaybackStarted[prefix]) showStartWatchOverlay(prefix);
+        return true;
+    }
+    return false;
+}
+
+// Изменить громкость активного плеера на delta, вернуть новое значение
+function playerAdjustVolume(prefix, videoEl, delta) {
+    const nv = Math.min(1, Math.max(0, (videoEl.volume || 0) + delta));
+    if (prefix === 'kodik') setKodikVolume(nv); else setLibriaVolume(nv);
+    const slider = document.getElementById(`${prefix}-vol-slider`);
+    if (slider) slider.value = nv;
+    return nv;
+}
+
+// Короткая всплывающая подсказка по центру плеера (громкость, mute и т.п.)
+function flashPlayerHint(parent, html) {
+    if (!parent) return;
+    let el = parent.querySelector('.player-key-hint');
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'player-key-hint';
+        parent.appendChild(el);
+    }
+    el.innerHTML = html;
+    lucide.createIcons();
+    el.style.opacity = '1';
+    clearTimeout(el._hideTimer);
+    el._hideTimer = setTimeout(() => { el.style.opacity = '0'; }, 650);
 }
 
 // ─── Translations ─────────────────────────────────────────────────────────────
@@ -78,6 +489,22 @@ const STRINGS = {
         genres_btn: 'Жанры',
         sort_label: 'Сортировка', sort_default: 'По умолчанию', sort_rating: 'По рейтингу', sort_title: 'По названию',
         popular_now: 'Популярное сейчас', catalog_desc: 'Подборка аниме из базы MyAnimeList',
+        ongoing_title: 'Онгоинги', ongoing_sub_libria: 'Сейчас выходит · AniLibria',
+        ongoing_sub_mal: 'Сейчас выходит · MyAnimeList',
+        ongoing_see_all: 'Смотреть все', ongoing_loading: 'Загрузка...',
+        ongoing_error: 'Не удалось загрузить онгоинги', ongoing_empty: 'Нет онгоингов',
+        ongoing_retry: 'Повторить', ongoing_no_match: 'Не нашли это аниме для просмотра',
+        hero_badge: 'Уютный кинозал AnyRainy',
+        hero_slogan: 'Завари чай, накройся пледом и смотри любимое аниме под шум дождя — тепло, уютно и без лишнего шума.',
+        hero_open_catalog: 'Открыть каталог', hero_random: 'Случайное аниме',
+        cat_top_title: 'Лучшее за всё время', cat_top_sub: 'Топ по оценкам · MyAnimeList',
+        cat_popular_title: 'Популярное у зрителей', cat_popular_sub: 'Что сейчас смотрят чаще всего',
+        view_all: 'Смотреть все', back_home: 'На главную',
+        ad_placeholder: 'Место для рекламы · 728×90 / 320×50',
+        catalog_full_title: 'Весь каталог', catalog_full_desc: 'Все аниме из базы MyAnimeList',
+        catalog_cta_sub: 'Это ещё не всё — в базе тысячи тайтлов', catalog_cta_btn: 'Посмотреть весь каталог',
+        kind_tv: 'ТВ Сериал', kind_movie: 'Фильм', kind_ova: 'OVA', kind_ona: 'ONA',
+        kind_special: 'Спешл', kind_music: 'Клип',
         recommendations_title: 'Можно ещё посмотреть', recommendations_desc: 'Несколько рекомендаций, если нужный тайтл не подошёл',
         episodes_count: n => `${n} эпизодов`, nothing_found: 'Ничего не найдено...', no_recommendations: 'Пока нет рекомендаций.',
         load_more_loading: 'Загружаем ещё аниме...', load_more_scroll: 'Листай ниже, новые аниме загрузятся автоматически',
@@ -86,7 +513,31 @@ const STRINGS = {
         search_results_label: q => `Результаты поиска: ${q}`, searching_label: q => `Ищем: ${q}`,
         search_found_label: q => `Найдено по запросу: ${q}`, search_results_sub: 'Результаты поиска, ниже — рекомендации',
         search_min_chars: 'Введите хотя бы 2 символа', search_error: 'Не удалось выполнить поиск',
-        back_to_catalog: 'Назад к каталогу', watching: 'Просмотр', episode_select: n => `Серия ${n}`,
+        back_to_catalog: 'Назад к каталогу', watching: 'Просмотр',         episode_select: n => `Серия ${n}`,
+        episode_label: 'Серия',
+        episodes_inside_player: 'Выбор серий — внутри плеера',
+        related_title: 'Другие части и связанное',
+        related_sub: 'Сезоны, спин-оффы и фильмы франшизы',
+        music_video_badge: 'Клип',
+        franchise_btn: 'Подробнее о франшизе', franchise_btn_short: 'Франшиза',
+        franchise_title: 'О франшизе', franchise_loading: 'Собираем франшизу…',
+        franchise_count: n => `${n} тайтлов · в хронологическом порядке`,
+        franchise_watch: 'Смотреть', franchise_current: 'сейчас смотрите',
+        admin_picks_title: 'Советы от админки',
+        admin_picks_sub: 'п-привет… я нечасто с кем-то делюсь, но это мои самые-самые любимые… т-только не смейся, ладно?..',
+        season_n: n => `Сезон ${n}`,
+        ep_meta_title: t => `Название: ${t}`,
+        show_more_episodes: 'Показать все серии',
+        show_less_episodes: 'Свернуть',
+        watch_page_title: t => `Смотреть аниме «${t}» онлайн`,
+        episodes_panel: 'Серии', voice_panel: 'Озвучка', server_panel: 'Плеер',
+        watch_layout_label: 'Расположение',
+        watch_layout_horizontal: 'Горизонтально',
+        watch_layout_vertical: 'Вертикально',
+        voice_anilibria: 'AniLibria', voice_sub: 'Субтитры', voice_dub: 'Озвучка',
+        quality_panel: 'Качество', picker_menu_title: 'Настройки', picker_current_ep: n => `Серия ${n}`,
+        player_source_label: 'Источник', voice_search_placeholder: 'Поиск студии...',
+        ep_badge_label: n => `Эпизод ${n}`, quality_auto: 'Авто',
         open_in_browser: 'В браузере', rating_badge: r => `Рейтинг ${r}`, ep_badge: n => `${n} эп.`,
         in_favorites: 'В избранном', to_favorites: 'В избранное', anime_loading: 'Загрузка аниме...',
         kodik_unavailable: 'Kodik недоступен', kodik_unavailable_sub: 'Русская озвучка не найдена для этого аниме.<br>Попробуй Megaplay.',
@@ -157,6 +608,10 @@ const STRINGS = {
         open_profile: 'Перейти в профиль',
         speed_label: 'Скорость',
         player_loading: 'Загрузка контента...',
+        buffer_loading: 'Загрузка',
+        buffer_low: 'Мало буфера',
+        buffer_ahead: s => `+${s}с буфер`,
+        buffer_full: 'Полностью загружено',
         libria_not_found: 'AniLibria: аниме не найдено',
         libria_try_other: 'Попробуй другой сервер',
         email_valid_error: 'Введи корректный email.',
@@ -196,6 +651,20 @@ const STRINGS = {
         adult_badge_title: 'Контент для взрослых',
         comment_like: 'Нравится',
         profile_logout: 'Выйти из аккаунта',
+        start_watch: 'Начать просмотр',
+        start_watch_hint: 'Перемотай и нажми, когда будешь готов',
+        continue_title: 'Продолжить просмотр',
+        continue_sub: 'С того места, где остановился',
+        continue_ep: n => `Серия ${n}`,
+        continue_clear: 'Очистить',
+        share_link: 'Ссылка',
+        toast_fav_added: 'Добавлено в избранное ♡',
+        toast_fav_removed: 'Убрано из избранного',
+        toast_comment_sent: 'Комментарий опубликован',
+        toast_link_copied: 'Ссылка скопирована',
+        toast_copy_failed: 'Не удалось скопировать',
+        toast_history_cleared: 'История просмотра очищена',
+        hentai_player_note: '18+ · Плеер HentaiPlay (MegaPlay)',
     },
     en: {
         catalog: 'Catalog', favorites_nav: 'Favorites', login_btn: 'Sign in',
@@ -207,6 +676,22 @@ const STRINGS = {
         genres_btn: 'Genres',
         sort_label: 'Sort', sort_default: 'Default', sort_rating: 'By rating', sort_title: 'By title',
         popular_now: 'Popular now', catalog_desc: 'Anime collection from MyAnimeList',
+        ongoing_title: 'Ongoing', ongoing_sub_libria: 'Currently airing · AniLibria',
+        ongoing_sub_mal: 'Currently airing · MyAnimeList',
+        ongoing_see_all: 'See all', ongoing_loading: 'Loading...',
+        ongoing_error: 'Failed to load ongoing anime', ongoing_empty: 'No ongoing titles',
+        ongoing_retry: 'Retry', ongoing_no_match: 'Could not find this anime to watch',
+        hero_badge: 'AnyRainy — your cozy theater',
+        hero_slogan: 'Brew some tea, grab a blanket and enjoy your favorite anime to the sound of rain — warm, cozy and clutter-free.',
+        hero_open_catalog: 'Open catalog', hero_random: 'Random anime',
+        cat_top_title: 'Best of all time', cat_top_sub: 'Top rated · MyAnimeList',
+        cat_popular_title: 'Most popular', cat_popular_sub: 'What everyone is watching now',
+        view_all: 'See all', back_home: 'Back home',
+        ad_placeholder: 'Ad space · 728×90 / 320×50',
+        catalog_full_title: 'Full catalog', catalog_full_desc: 'All anime from MyAnimeList database',
+        catalog_cta_sub: 'There\'s more — thousands of titles in the database', catalog_cta_btn: 'Browse full catalog',
+        kind_tv: 'TV Series', kind_movie: 'Movie', kind_ova: 'OVA', kind_ona: 'ONA',
+        kind_special: 'Special', kind_music: 'Music',
         recommendations_title: 'You might also like', recommendations_desc: 'A few recommendations if the title wasn\'t right',
         episodes_count: n => `${n} episodes`, nothing_found: 'Nothing found...', no_recommendations: 'No recommendations yet.',
         load_more_loading: 'Loading more anime...', load_more_scroll: 'Scroll down to auto-load more',
@@ -215,7 +700,31 @@ const STRINGS = {
         search_results_label: q => `Search results: ${q}`, searching_label: q => `Searching: ${q}`,
         search_found_label: q => `Found for: ${q}`, search_results_sub: 'Search results, recommendations below',
         search_min_chars: 'Enter at least 2 characters', search_error: 'Search failed',
-        back_to_catalog: 'Back to catalog', watching: 'Watching', episode_select: n => `Episode ${n}`,
+        back_to_catalog: 'Back to catalog', watching: 'Watching',         episode_select: n => `Episode ${n}`,
+        episode_label: 'Episode',
+        episodes_inside_player: 'Episode selection is inside the player',
+        related_title: 'Other parts & related',
+        related_sub: 'Seasons, spin-offs and franchise movies',
+        music_video_badge: 'Music video',
+        franchise_btn: 'About the franchise', franchise_btn_short: 'Franchise',
+        franchise_title: 'About the franchise', franchise_loading: 'Building franchise…',
+        franchise_count: n => `${n} titles · in chronological order`,
+        franchise_watch: 'Watch', franchise_current: 'now watching',
+        admin_picks_title: "Admin's picks",
+        admin_picks_sub: "h-hi… i don't really share this with anyone, but these are my very favorites… p-please don't laugh, okay?..",
+        season_n: n => `Season ${n}`,
+        ep_meta_title: t => `Title: ${t}`,
+        show_more_episodes: 'Show all episodes',
+        show_less_episodes: 'Collapse',
+        watch_page_title: t => `Watch «${t}» online`,
+        episodes_panel: 'Episodes', voice_panel: 'Voice track', server_panel: 'Player',
+        watch_layout_label: 'Layout',
+        watch_layout_horizontal: 'Horizontal',
+        watch_layout_vertical: 'Vertical',
+        voice_anilibria: 'AniLibria', voice_sub: 'Subtitles', voice_dub: 'Dub',
+        quality_panel: 'Quality', picker_menu_title: 'Settings', picker_current_ep: n => `Ep. ${n}`,
+        player_source_label: 'Source', voice_search_placeholder: 'Search studio...',
+        ep_badge_label: n => `Episode ${n}`, quality_auto: 'Auto',
         open_in_browser: 'In browser', rating_badge: r => `Rating ${r}`, ep_badge: n => `${n} ep.`,
         in_favorites: 'In favorites', to_favorites: 'Add to favorites', anime_loading: 'Loading anime...',
         kodik_unavailable: 'Kodik unavailable', kodik_unavailable_sub: 'Russian dub not found for this anime.<br>Try Megaplay.',
@@ -286,6 +795,10 @@ const STRINGS = {
         open_profile: 'View profile',
         speed_label: 'Speed',
         player_loading: 'Loading...',
+        buffer_loading: 'Loading',
+        buffer_low: 'Low buffer',
+        buffer_ahead: s => `+${s}s buffered`,
+        buffer_full: 'Fully buffered',
         libria_not_found: 'AniLibria: anime not found',
         libria_try_other: 'Try another server',
         email_valid_error: 'Enter a valid email.',
@@ -325,6 +838,20 @@ const STRINGS = {
         adult_badge_title: 'Adult content',
         comment_like: 'Like',
         profile_logout: 'Sign out',
+        start_watch: 'Start watching',
+        start_watch_hint: 'Scrub to your spot, then press play',
+        continue_title: 'Continue watching',
+        continue_sub: 'Pick up where you left off',
+        continue_ep: n => `Episode ${n}`,
+        continue_clear: 'Clear',
+        share_link: 'Link',
+        toast_fav_added: 'Added to favorites ♡',
+        toast_fav_removed: 'Removed from favorites',
+        toast_comment_sent: 'Comment posted',
+        toast_link_copied: 'Link copied',
+        toast_copy_failed: 'Could not copy link',
+        toast_history_cleared: 'Watch history cleared',
+        hentai_player_note: '18+ · HentaiPlay player (MegaPlay)',
     }
 };
 
@@ -337,6 +864,7 @@ function renderTranslations() {
     document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
     document.querySelectorAll('[data-i18n-html]').forEach(el => { el.innerHTML = t(el.dataset.i18nHtml); });
     document.querySelectorAll('[data-i18n-placeholder]').forEach(el => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+    renderSortPanel();
 }
 
 // ─── Language ─────────────────────────────────────────────────────────────────
@@ -349,6 +877,9 @@ function applyLangToAllAnime() {
     };
     animeData.forEach(updateTitle);
     recommendedAnime.forEach(updateTitle);
+    ongoingAnime.forEach(updateTitle);
+    topRowAnime.forEach(updateTitle);
+    popularRowAnime.forEach(updateTitle);
     if (currentAnime) updateTitle(currentAnime);
 }
 
@@ -361,10 +892,18 @@ function toggleLang() {
     updateLangToggle();
     renderTranslations();
     if (currentSection === 'home') {
+        renderContinueWatching();
+        ['ongoing', 'top', 'popular'].forEach(renderCarousel);
+        if (currentLang === 'ru') {
+            ['ongoing', 'top', 'popular'].forEach(c => {
+                if (getRow(c).length) enrichWithRussianTitles(getRow(c)).then(() => renderCarousel(c)).catch(() => {});
+            });
+        }
+    } else if (currentSection === 'list') {
         renderCatalog();
     } else if (currentSection === 'watch' && currentAnime) {
         renderPlayerUI(currentAnime);
-        if (currentLang === 'ru') enrichWithShikimoriTitles([currentAnime]).then(() => {
+        if (currentLang === 'ru') enrichWithRussianTitles([currentAnime]).then(() => {
             if (currentAnime?.displayTitle) document.title = `${currentAnime.displayTitle} — AnyRainy`;
         });
         // Если переключились на RU и перевода ещё нет — запустить перевод
@@ -394,16 +933,29 @@ function updateLangToggle() {
 
 // ─── Synopsis translation ─────────────────────────────────────────────────────
 
+let _myMemoryBlockedUntil = 0;
+
+function isMyMemoryRateLimited(res, data) {
+    return res?.status === 429 || data?.responseStatus === 429
+        || String(data?.responseDetails || '').toLowerCase().includes('quota');
+}
+
 async function translateSynopsis(text, animeId) {
     if (!TRANSLATE_TO || !text || text === 'Описание пока недоступно.') return text;
     if (synopsisCache[animeId]) return synopsisCache[animeId];
     if (TRANSLATE_TO === 'ru' && /[Ѐ-ӿ]{10,}/.test(text)) return text;
+    if (Date.now() < _myMemoryBlockedUntil) return text;
     try {
         const snippet = text.slice(0, 480);
         const res = await fetch(
-            `https://api.mymemory.translated.net/get?q=${encodeURIComponent(snippet)}&langpair=en|${TRANSLATE_TO}`
+            `https://api.mymemory.translated.net/get?q=${encodeURIComponent(snippet)}&langpair=en|${TRANSLATE_TO}`,
+            { signal: AbortSignal.timeout(8000) }
         );
         const data = await res.json();
+        if (isMyMemoryRateLimited(res, data)) {
+            _myMemoryBlockedUntil = Date.now() + 120000;
+            return text;
+        }
         if (data.responseStatus === 200 && data.responseData?.translatedText) {
             const translated = data.responseData.translatedText;
             synopsisCache[animeId] = translated;
@@ -545,6 +1097,7 @@ function toggleFavorite(animeId) {
     }
     localStorage.setItem(key, JSON.stringify(favorites));
     updateHeartButtons(animeId);
+    showToast(idx >= 0 ? t('toast_fav_removed') : t('toast_fav_added'), 'success');
     // Update count in profile panel
     const countEl = document.getElementById('profile-fav-count');
     if (countEl) countEl.textContent = getFavorites().length;
@@ -566,17 +1119,17 @@ function openFavorites() {
     if (!currentUser) {
         document.getElementById('favorites-guest')?.classList.remove('hidden');
         document.getElementById('favorites-content')?.classList.add('hidden');
-        modal.classList.remove('hidden');
+        openModalOverlay(modal);
         lucide.createIcons();
         return;
     }
     document.getElementById('favorites-guest')?.classList.add('hidden');
     renderFavoritesModal();
-    modal.classList.remove('hidden');
+    openModalOverlay(modal);
 }
 
 function closeFavorites() {
-    document.getElementById('favorites-modal')?.classList.add('hidden');
+    closeModalOverlay(document.getElementById('favorites-modal'));
 }
 
 function renderFavoritesModal() {
@@ -596,7 +1149,8 @@ function renderFavoritesModal() {
     }
     content.innerHTML = `<div class="grid grid-cols-2 sm:grid-cols-3 gap-4">${renderAnimeCards(favorites)}</div>`;
     lucide.createIcons();
-    if (currentLang === 'ru') enrichWithShikimoriTitles(favorites);
+    staggerAnimItems(content);
+    if (currentLang === 'ru') enrichWithRussianTitles(favorites);
 }
 
 // ─── Auth UI ──────────────────────────────────────────────────────────────────
@@ -707,14 +1261,14 @@ function switchAuthMode(mode) {
 function openAuthModal(mode = authMode) {
     const modal = document.getElementById('auth-modal');
     if (!modal) return;
-    modal.classList.remove('hidden');
+    openModalOverlay(modal, { lockScroll: false });
     switchAuthMode(mode);
     updateAuthUI();
     lucide.createIcons();
 }
 
 function closeAuthModal() {
-    document.getElementById('auth-modal')?.classList.add('hidden');
+    closeModalOverlay(document.getElementById('auth-modal'), { unlockScroll: false });
     document.getElementById('admin-secret-panel')?.classList.add('hidden');
     document.getElementById('forgot-password-panel')?.classList.add('hidden');
     const passInput = document.getElementById('admin-password-input');
@@ -759,19 +1313,6 @@ async function requestEmailVerification() {
     const btn = document.getElementById('verify-email-btn');
     const errorEl = document.getElementById('email-verify-error');
     const email = emailInput?.value.trim().toLowerCase();
-
-    // Секретный обход для тестирования
-    if (email === 'dota5989') {
-        if (errorEl) errorEl.classList.add('hidden');
-        emailVerifyCode = '123123';
-        emailVerifyTarget = 'dota5989';
-        emailVerifyExpiry = Date.now() + 60 * 60 * 1000;
-        emailVerified = false;
-        document.getElementById('email-code-row')?.classList.remove('hidden');
-        document.getElementById('auth-email-code')?.focus();
-        if (btn) { btn.textContent = t('verify_btn'); btn.disabled = false; }
-        return;
-    }
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         if (errorEl) { errorEl.textContent = t('email_valid_error'); errorEl.classList.remove('hidden'); }
@@ -1028,7 +1569,7 @@ function renderCommentsSection(anime) {
     const comments = getAnimeComments(anime.id);
     const commentsHtml = comments.length
         ? comments.map(comment => `
-            <div class="rounded-2xl border border-subtle p-4 bg-white dark:bg-[#1e1e1e]">
+            <div class="anim-item rounded-2xl border border-subtle p-4 bg-white dark:bg-[#1e1e1e]">
                 <div class="flex items-start gap-3">
                     <button onclick="openUserProfile('${escapeHtml(comment.username)}')"
                         class="w-9 h-9 rounded-full bg-airbnb flex-shrink-0 flex items-center justify-center overflow-hidden hover:ring-2 hover:ring-airbnb transition-all">
@@ -1111,7 +1652,11 @@ function replyToComment(username) {
 
 function refreshCommentsOnly() {
     const wrapper = document.getElementById('player-comments-wrapper');
-    if (wrapper && currentAnime) { wrapper.innerHTML = renderCommentsSection(currentAnime); lucide.createIcons(); }
+    if (wrapper && currentAnime) {
+        wrapper.innerHTML = renderCommentsSection(currentAnime);
+        lucide.createIcons();
+        staggerAnimItems(wrapper);
+    }
 }
 
 function submitComment(event) {
@@ -1119,7 +1664,7 @@ function submitComment(event) {
     if (!currentUser || !currentAnime) { openAuthModal('login'); return; }
     const input = document.getElementById('comment-input');
     const text = input?.value.trim() || '';
-    if (text.length < 2) { alert(t('comment_too_short')); return; }
+    if (text.length < 2) { showToast(t('comment_too_short'), 'error'); return; }
     const comments = getAnimeComments(currentAnime.id);
     comments.unshift({
         id: `${Date.now()}`,
@@ -1134,6 +1679,7 @@ function submitComment(event) {
     const indicator = document.getElementById('reply-indicator');
     if (indicator) indicator.classList.add('hidden');
     refreshCommentsOnly();
+    showToast(t('toast_comment_sent'), 'success');
 }
 
 function deleteComment(animeId, commentId) {
@@ -1236,7 +1782,7 @@ function renderProfilePage(username) {
 
     container.innerHTML = `
         <!-- Header -->
-        <div class="flex flex-col sm:flex-row items-center sm:items-start gap-6">
+        <div class="anim-block flex flex-col sm:flex-row items-center sm:items-start gap-6">
             <div class="relative shrink-0">
                 <div class="w-24 h-24 rounded-full bg-airbnb flex items-center justify-center overflow-hidden ring-4 ring-white dark:ring-[#1e1e1e]">
                     ${avatarHtml}
@@ -1255,7 +1801,7 @@ function renderProfilePage(username) {
 
         ${isOwn ? `
         <!-- Settings -->
-        <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl border border-subtle p-5 space-y-4">
+        <div class="anim-block bg-white dark:bg-[#1e1e1e] rounded-2xl border border-subtle p-5 space-y-4">
             <h3 class="font-bold text-gray-900 dark:text-white text-base">${t('profile_settings_title')}</h3>
             <div class="space-y-2">
                 <label class="text-sm font-medium text-gray-700 dark:text-gray-300" data-i18n="profile_bio_label">О себе</label>
@@ -1274,7 +1820,7 @@ function renderProfilePage(username) {
         </div>
 
         <!-- Смена пароля -->
-        <div class="bg-white dark:bg-[#1e1e1e] rounded-2xl border border-subtle p-5 space-y-4">
+        <div class="anim-block bg-white dark:bg-[#1e1e1e] rounded-2xl border border-subtle p-5 space-y-4">
             <h3 class="font-bold text-gray-900 dark:text-white text-base">${t('profile_change_password')}</h3>
             <div class="space-y-3">
                 <input type="password" id="profile-cur-pass" autocomplete="current-password"
@@ -1298,7 +1844,7 @@ function renderProfilePage(username) {
         </button>` : ''}
 
         ${favorites !== null ? `
-        <div class="space-y-4">
+        <div class="anim-block space-y-4">
             <h3 class="text-xl font-bold text-gray-900 dark:text-white">${t('favorites_title')} <span class="text-sm font-normal text-gray-500">${favorites.length}</span></h3>
             ${favorites.length
                 ? `<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">${renderAnimeCards(favorites)}</div>`
@@ -1308,11 +1854,11 @@ function renderProfilePage(username) {
             <i data-lucide="lock" class="w-4 h-4"></i>${t('profile_favorites_hidden')}
         </div>`}
 
-        <div class="space-y-4">
+        <div class="anim-block space-y-4">
             <h3 class="text-xl font-bold text-gray-900 dark:text-white">${t('profile_comments_title')} <span class="text-sm font-normal text-gray-500">${userComments.length}</span></h3>
             ${userComments.length ? `<div class="space-y-3">
                 ${userComments.map(c => `
-                <div class="rounded-2xl border border-subtle p-4 bg-white dark:bg-[#1e1e1e]">
+                <div class="anim-item rounded-2xl border border-subtle p-4 bg-white dark:bg-[#1e1e1e]">
                     <div class="flex items-center justify-between gap-2 mb-2 flex-wrap">
                         ${c.animeName ? `<button onclick="watchAnime(${c.animeId})" class="text-xs font-semibold text-airbnb hover:underline truncate max-w-xs">${escapeHtml(c.animeName)}</button>` : `<span class="text-xs text-gray-400">#${c.animeId}</span>`}
                         <span class="text-xs text-gray-400 shrink-0">${escapeHtml(c.createdAt)}</span>
@@ -1325,13 +1871,17 @@ function renderProfilePage(username) {
         </div>
     `;
     lucide.createIcons();
-    if (currentLang === 'ru' && favorites && favorites.length) enrichWithShikimoriTitles(favorites);
+    staggerAnimBlocks(container);
+    staggerAnimItems(container);
+    if (currentLang === 'ru' && favorites && favorites.length) enrichWithRussianTitles(favorites);
 }
 
 function showProfilePage(username) {
     if (currentSection === 'watch') stopActivePlayer();
     document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
     document.getElementById('profile-section')?.classList.remove('hidden');
+    const profileSection = document.getElementById('profile-section');
+    animateSection(profileSection);
     currentSection = 'profile';
     currentProfileUsername = username || null;
     const urlHash = username ? `#profile/${encodeURIComponent(username)}` : '#profile';
@@ -1439,14 +1989,13 @@ let watchToken = 0;
 
 // Direct player state
 let kodikHls = null;
-let kodikKeyListener = null;
 let kodikPlayerToken = 0;
+let iframePlayerToken = 0;
 const kodikEpCache = {}; // `${malId}_${translationId}_${ep}` → link | 'ERROR'
 
 let libriaHls = null;
 let libriaGlContext = null;
 let libriaRafId = null;
-let libriaKeyListener = null;
 let libriaPlayerToken = 0;
 const anilibriaCache = {}; // malId → title object | null
 
@@ -1455,6 +2004,57 @@ const KODIK_TOKEN = '56a768d08f43091901c44b54fe970049';
 let currentKodikTranslations = [];  // [{id, title, link}]
 let currentKodikTranslationIdx = 0;
 let currentKodikEpisodeNums = [];   // реально существующие серии [1, 2, 3, ...]
+let currentKodikSeasons = null;     // [{ id, label, episodes }] из Kodik
+let currentKinopoiskId = null;      // мост к балансерам Alloha / Collaps / Turbo
+let currentPlayerSeasonIdx = 0;
+let currentEpisodeSeasonId = null;
+let playerEpisodesExpanded = false;
+let watchSidebarTab = 'player';
+const WATCH_LAYOUT_STORAGE_KEY = 'anyrainy_watch_player_layout';
+const EP_GRID_COLLAPSE_THRESHOLD = 24;
+
+function loadWatchPlayerLayout() {
+    try {
+        const v = localStorage.getItem(WATCH_LAYOUT_STORAGE_KEY);
+        if (v === 'horizontal' || v === 'vertical') return v;
+    } catch (_) {}
+    return 'horizontal';
+}
+
+let watchPlayerLayout = loadWatchPlayerLayout();
+let watchSidebarCollapsed = localStorage.getItem('anyrainy_watch_sidebar_collapsed') === '1';
+
+function getWatchLayoutClassList() {
+    return `watch-player-layout watch-player-layout--with-sidebar watch-player-layout--${watchPlayerLayout}`
+        + (watchSidebarCollapsed ? ' watch-player-layout--collapsed' : '');
+}
+
+function toggleWatchSidebar() {
+    watchSidebarCollapsed = !watchSidebarCollapsed;
+    try { localStorage.setItem('anyrainy_watch_sidebar_collapsed', watchSidebarCollapsed ? '1' : '0'); } catch (_) {}
+    document.querySelector('.watch-player-layout')?.classList.toggle('watch-player-layout--collapsed', watchSidebarCollapsed);
+    document.querySelectorAll('.watch-sidebar-hide-btn').forEach(btn => {
+        btn.classList.toggle('watch-layout-btn--active', watchSidebarCollapsed);
+    });
+}
+
+function applyWatchPlayerLayout() {
+    const layout = document.querySelector('.watch-player-layout');
+    if (!layout) return;
+    layout.classList.remove('watch-player-layout--horizontal', 'watch-player-layout--vertical');
+    layout.classList.add(`watch-player-layout--${watchPlayerLayout}`);
+}
+
+function setWatchPlayerLayout(mode) {
+    if (mode !== 'horizontal' && mode !== 'vertical') return;
+    watchPlayerLayout = mode;
+    try { localStorage.setItem(WATCH_LAYOUT_STORAGE_KEY, mode); } catch (_) {}
+    applyWatchPlayerLayout();
+    document.querySelectorAll('.watch-layout-btn').forEach(btn => {
+        btn.classList.toggle('watch-layout-btn--active', btn.dataset.watchLayout === mode);
+    });
+    lucide.createIcons();
+}
 const kodikCache = {};
 
 function extractKodikEpisodes(results) {
@@ -1480,7 +2080,7 @@ async function fetchKodikData(malId) {
             `https://kodik-api.com/search?token=${KODIK_TOKEN}&shikimori_id=${malId}&translation_type=voice&limit=20`
         );
         const data = await res.json();
-        if (!data.results?.length) { kodikCache[malId] = { translations: [], episodes: [] }; return kodikCache[malId]; }
+        if (!data.results?.length) { kodikCache[malId] = { translations: [], episodes: [], kinopoiskId: null }; return kodikCache[malId]; }
         const seen = new Set();
         const translations = data.results
             .filter(r => r.translation?.id && !seen.has(r.translation.id) && seen.add(r.translation.id))
@@ -1489,17 +2089,82 @@ async function fetchKodikData(malId) {
                 title: r.translation.title,
                 link: r.link.startsWith('//') ? 'https:' + r.link : r.link,
             }));
-        // Use episodes_count from first result for the episode dropdown
-        const epCount = data.results[0]?.episodes_count || 0;
+        // Берём максимальный episodes_count по всем результатам (у разных озвучек он может отличаться)
+        const epCount = Math.max(0, ...data.results.map(r => r.episodes_count || 0));
         const episodes = epCount > 0 ? Array.from({ length: epCount }, (_, i) => i + 1) : [];
-        kodikCache[malId] = { translations, episodes };
+        // Kinopoisk id — мост к балансерам Alloha / Collaps / Turbo
+        const kinopoiskId = data.results[0]?.kinopoisk_id
+            || data.results[0]?.material_data?.kinopoisk_id || null;
+        kodikCache[malId] = { translations, episodes, kinopoiskId };
         return kodikCache[malId];
-    } catch (_) { kodikCache[malId] = { translations: [], episodes: [] }; return kodikCache[malId]; }
+    } catch (_) { kodikCache[malId] = { translations: [], episodes: [], kinopoiskId: null }; return kodikCache[malId]; }
+}
+
+function parseKodikSeasons(result) {
+    const seasons = result?.seasons || {};
+    const keys = Object.keys(seasons).sort((a, b) => {
+        const na = +a, nb = +b;
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return String(a).localeCompare(String(b), undefined, { numeric: true });
+    });
+    if (!keys.length) return null;
+    const out = keys.map(key => {
+        const s = seasons[key];
+        const eps = Object.keys(s.episodes || {})
+            .map(n => +n)
+            .filter(n => !isNaN(n) && n > 0)
+            .sort((a, b) => a - b);
+        if (!eps.length) return null;
+        const label = (s.title || s.season_title || '').trim() || t('season_n', key);
+        return { id: String(key), label, episodes: eps };
+    }).filter(Boolean);
+    return out.length ? out : null;
+}
+
+async function loadKodikSeasonsMetadata() {
+    if (!currentAnime?.malId || !currentKodikTranslations.length) return;
+    const tr = currentKodikTranslations[currentKodikTranslationIdx];
+    if (!tr) return;
+    try {
+        const res = await fetch(
+            `https://kodik-api.com/search?token=${KODIK_TOKEN}&shikimori_id=${currentAnime.malId}&translation_id=${tr.id}&translation_type=voice&with_episodes=true&limit=1`,
+            { signal: AbortSignal.timeout(12000) }
+        );
+        if (!res.ok) return;
+        const data = await res.json();
+        const r0 = data.results?.[0];
+        const parsed = parseKodikSeasons(r0);
+        if (parsed?.length) {
+            currentKodikSeasons = parsed;
+            currentKodikEpisodeNums = [...new Set(parsed.flatMap(s => s.episodes))].sort((a, b) => a - b);
+        } else if (r0?.episodes_count > 1) {
+            // У тайтла нет структуры сезонов, но есть счётчик серий — строим список из него
+            currentKodikSeasons = null;
+            currentKodikEpisodeNums = Array.from({ length: r0.episodes_count }, (_, i) => i + 1);
+        } else {
+            return;
+        }
+        syncPlayerSeasonForEpisode(currentEpisodeNum);
+        refreshPlayerChrome(true);
+    } catch (_) {}
+}
+
+function syncPlayerSeasonForEpisode(ep) {
+    const seasons = getPlayerSeasons();
+    if (!seasons.length) return;
+    const hit = seasons.findIndex(s => s.episodes.includes(ep));
+    if (hit >= 0) {
+        currentPlayerSeasonIdx = hit;
+        currentEpisodeSeasonId = seasons[hit].id;
+        return;
+    }
+    currentPlayerSeasonIdx = 0;
+    currentEpisodeSeasonId = seasons[0]?.id ?? null;
 }
 
 // Получить ссылку конкретного эпизода из Kodik (с кешированием)
-async function fetchKodikEpisodeLink(malId, translationId, ep) {
-    const key = `${malId}_${translationId}_${ep}`;
+async function fetchKodikEpisodeLink(malId, translationId, ep, seasonId = null) {
+    const key = `${malId}_${translationId}_${seasonId || '_'}_${ep}`;
     if (kodikEpCache[key]) return kodikEpCache[key] === 'ERROR' ? null : kodikEpCache[key];
     // Всегда берём seria-ссылку из API (тип seria нужен для /ftor)
     try {
@@ -1511,9 +2176,12 @@ async function fetchKodikEpisodeLink(malId, translationId, ep) {
         const r = data.results?.[0];
         if (!r) { kodikEpCache[key] = 'ERROR'; return null; }
 
-        // Ищем эпизод в seasons
-        // epData может быть строкой (прямая ссылка) или объектом {link: ...}
-        for (const season of Object.values(r.seasons || {})) {
+        // Ищем эпизод в seasons (приоритет — выбранный сезон)
+        const allSeasons = r.seasons || {};
+        const seasonEntries = seasonId && allSeasons[seasonId]
+            ? [[seasonId, allSeasons[seasonId]]]
+            : Object.entries(allSeasons);
+        for (const [, season] of seasonEntries) {
             const epData = season.episodes?.[ep] ?? season.episodes?.[String(ep)];
             const rawLink = typeof epData === 'string' ? epData : epData?.link;
             if (rawLink) {
@@ -1547,7 +2215,8 @@ async function fetchAnilistId(malId) {
             body: JSON.stringify({
                 query: 'query ($id: Int) { Media(idMal: $id, type: ANIME) { id } }',
                 variables: { id: malId }
-            })
+            }),
+            signal: AbortSignal.timeout(8000),
         });
         const data = await res.json();
         const id = data?.data?.Media?.id;
@@ -1556,15 +2225,159 @@ async function fetchAnilistId(malId) {
     } catch (_) { return null; }
 }
 
-// Плееры. builtinSelection: true — плеер сам управляет сериями/озвучкой внутри
-const AUTO_SERVERS = [
-    { name: '4K',          type: 'libria', builtinSelection: false },
-    { name: 'Kodik RU',    type: 'kodik',  builtinSelection: false },
-    { name: 'Megaplay',    type: 'auto',   builtinSelection: false,
-      url: (malId, ep) => `https://megaplay.buzz/stream/mal/${malId}/${ep}/sub` },
-    { name: 'Megaplay DUB', type: 'auto', builtinSelection: false,
-      url: (malId, ep) => `https://megaplay.buzz/stream/mal/${malId}/${ep}/dub` },
+function kodikFindPlayerUrl(malId, ep) {
+    return `https://kodik.info/find-player?token=${KODIK_TOKEN}&shikimori_id=${malId}&with_episodes=true&episode=${ep}`;
+}
+
+async function resolveAnimegoEmbedUrl(provider, malId, ep) {
+    if (!malId) return null;
+    const params = new URLSearchParams({
+        provider,
+        malId: String(malId),
+        ep: String(ep || 1),
+    });
+    if (currentAnime?.displayTitle) params.set('title', currentAnime.displayTitle);
+    try {
+        const res = await fetch(`/embed-resolve?${params}`, { signal: AbortSignal.timeout(22000) });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.url || null;
+    } catch (_) {
+        return null;
+    }
+}
+
+async function resolveAniboomEmbedUrl(malId, ep) {
+    return resolveAnimegoEmbedUrl('aniboom', malId, ep);
+}
+
+async function resolveSibnetEmbedUrl(malId, ep) {
+    return resolveAnimegoEmbedUrl('sibnet', malId, ep);
+}
+
+// Балансеры из плейлиста AnimeGO (CVH, Alloha, Aksor)
+async function resolveCvhEmbedUrl(malId, ep) {
+    return resolveAnimegoEmbedUrl('cvh', malId, ep);
+}
+
+async function resolveAksorEmbedUrl(malId, ep) {
+    return resolveAnimegoEmbedUrl('aksor', malId, ep);
+}
+
+// ── Балансеры по Kinopoisk id (Alloha / Collaps / Turbo) через сервер ──────────
+async function ensureKinopoiskId(malId) {
+    if (currentKinopoiskId) return currentKinopoiskId;
+    try {
+        const d = await fetchKodikData(malId);
+        currentKinopoiskId = d.kinopoiskId || null;
+    } catch (_) {}
+    return currentKinopoiskId;
+}
+
+async function resolveBalancerUrl(provider, malId) {
+    const kp = await ensureKinopoiskId(malId);
+    if (!kp) return null;
+    try {
+        const res = await fetch(`/balancer-resolve?provider=${provider}&kp=${kp}`, { signal: AbortSignal.timeout(16000) });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.url || null;
+    } catch (_) { return null; }
+}
+
+async function resolveAllohaPlayerUrl(malId)  { return resolveBalancerUrl('alloha', malId); }
+async function resolveCollapsUrl(malId)        { return resolveBalancerUrl('collaps', malId); }
+async function resolveTurboUrl(malId)          { return resolveBalancerUrl('turbo', malId); }
+
+// ── JutSu (jut.su) — отдельный сайт, ссылка по slug названия ───────────────────
+function jutsuSlug(title) {
+    return String(title || '')
+        .toLowerCase()
+        .replace(/['’`.,:!?()]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
+
+async function resolveJutsuUrl(malId, ep) {
+    const slug = jutsuSlug(currentAnime?.title || currentAnime?.displayTitle);
+    if (!slug) return null;
+    // У jut.su нет id-API; формируем прямую ссылку на эпизод (может не встроиться из-за защиты от фрейма)
+    return `https://jut.su/${slug}/episode-${ep || 1}.html`;
+}
+
+async function resolveVidPlusUrl(malId, ep) {
+    const anilistId = await fetchAnilistId(malId);
+    if (!anilistId) return null;
+    // Без темизации AnyRainy — родной вид плеера. autoNext не оформление, оставляем.
+    return `https://player.vidplus.to/embed/anilist/${anilistId}/${ep}?autoNext=true`;
+}
+
+// Плееры на странице просмотра
+const WATCH_EMBED_PLAYERS = [
+    { name: 'Aloha', key: 'alloha', type: 'iframe', builtinSelection: false,
+      resolveUrl: resolveAllohaPlayerUrl },
+    { name: 'Collaps', key: 'collaps', type: 'iframe', builtinSelection: false,
+      resolveUrl: resolveCollapsUrl },
+    { name: 'Kodik RU', key: 'kodik', type: 'kodik', builtinSelection: false },
+    { name: 'AniLibria 4K', key: 'libria', type: 'libria', builtinSelection: false },
+    { name: 'AniBoom', key: 'aniboom', type: 'iframe', builtinSelection: false,
+      resolveUrl: resolveAniboomEmbedUrl },
+    { name: 'CVH', key: 'cvh', type: 'iframe', builtinSelection: false,
+      resolveUrl: resolveCvhEmbedUrl },
+    { name: 'Turbo', key: 'turbo', type: 'iframe', builtinSelection: false,
+      resolveUrl: resolveTurboUrl },
+    { name: 'Aksor', key: 'aksor', type: 'iframe', builtinSelection: false,
+      resolveUrl: resolveAksorEmbedUrl },
+    { name: 'Sibnet', key: 'sibnet', type: 'iframe', builtinSelection: false,
+      resolveUrl: resolveSibnetEmbedUrl },
+    { name: 'JutSu', key: 'jutsu', type: 'iframe', builtinSelection: false,
+      resolveUrl: resolveJutsuUrl },
+    { name: 'MegaPlay (Jap+Sub)', key: 'megaplay', type: 'iframe', builtinSelection: false,
+      url: (malId, ep) => `https://animeplay.cfd/stream/mal/${malId}/${ep}/sub` },
+    { name: 'MegaPlay (Dub)', key: 'megaplay-dub', type: 'iframe', builtinSelection: false,
+      url: (malId, ep) => `https://animeplay.cfd/stream/mal/${malId}/${ep}/dub` },
+    { name: 'VidPlus (Sub/Dub)', key: 'vidplus', type: 'iframe', builtinSelection: false,
+      resolveUrl: resolveVidPlusUrl },
+    { name: 'Kodik Embed', key: 'kodik-embed', type: 'iframe', builtinSelection: false,
+      url: (malId, ep) => {
+          const tr = currentKodikTranslations[currentKodikTranslationIdx];
+          return buildKodikFindPlayerUrl(malId, ep, tr?.id);
+      } },
 ];
+
+const HENTAI_SERVERS = [
+    { name: 'HentaiPlay', key: 'hentaiplay', type: 'iframe', builtinSelection: false,
+      url: (malId, ep) => `https://animeplay.cfd/stream/mal/${malId}/${ep}/sub` },
+    { name: 'HentaiPlay DUB', key: 'hentaiplay-dub', type: 'iframe', builtinSelection: false,
+      url: (malId, ep) => `https://animeplay.cfd/stream/mal/${malId}/${ep}/dub` },
+    { name: 'Kodik 18+', key: 'kodik-embed', type: 'iframe', builtinSelection: false,
+      url: (malId, ep) => buildKodikFindPlayerUrl(malId, ep) },
+];
+
+function isHentaiAnime(anime) {
+    return !!(anime?.tags || []).includes('Hentai');
+}
+
+function getActiveServers() {
+    return currentAnime && isHentaiAnime(currentAnime) ? HENTAI_SERVERS : WATCH_EMBED_PLAYERS;
+}
+
+function getWatchPlayerByKey(key) {
+    return getActiveServers().find(s => s.key === key);
+}
+
+function getWatchPlayerIndex(key) {
+    return getActiveServers().findIndex(s => s.key === key);
+}
+
+function isKodikWatchPlayer() {
+    const key = getActiveServers()[currentServerIndex]?.key;
+    return key === 'kodik' || key === 'kodik-embed';
+}
+
+function isNativeKodikPlayer() {
+    return getActiveServers()[currentServerIndex]?.key === 'kodik';
+}
 
 // ─── Genre translations ───────────────────────────────────────────────────────
 
@@ -1572,7 +2385,7 @@ const genreTranslations = {
     // Explicit genres
     Action: 'Экшен', Adventure: 'Приключения', 'Avant Garde': 'Авангард',
     'Award Winning': 'Отмечено наградами', 'Boys Love': 'Сёнэн-ай',
-    Comedy: 'Комедия', Drama: 'Драма', Ecchi: 'Этти', Erotica: 'Эротика',
+    Comedy: 'Комедия', Drama: 'Драма', Ecchi: 'Этти', Erotica: 'Эротика', Hentai: 'Хентай',
     Fantasy: 'Фэнтези', 'Girls Love': 'Сёдзё-ай', Gourmet: 'Гурман',
     Harem: 'Гарем', Horror: 'Ужасы', Mystery: 'Мистика', Romance: 'Романтика',
     'Sci-Fi': 'Научная фантастика', 'Slice of Life': 'Повседневность',
@@ -1650,6 +2463,9 @@ function mergeAnimeResults(existingItems, nextItems) {
 function findAnimeById(id) {
     return animeData.find(item => item.id === id)
         || recommendedAnime.find(item => item.id === id)
+        || ongoingAnime.find(item => item.id === id)
+        || topRowAnime.find(item => item.id === id)
+        || popularRowAnime.find(item => item.id === id)
         || null;
 }
 
@@ -1667,9 +2483,465 @@ function getRussianTitle(item) {
     return cyrillicTitle || item.title_english || item.title || 'Без названия';
 }
 
-// ─── Russian titles via Shikimori (батч, 1 запрос на страницу) ───────────────
+// ─── Ongoings (AniLibria — российский хостинг, работает без VPN) ──────────────
 
-const SHIKIMORI_BASE = 'https://shikimori.one';
+const ANILIBRIA_BASE = 'https://anilibria.top';
+const ANIME_KIND_KEYS = {
+    tv: 'kind_tv', movie: 'kind_movie', ova: 'kind_ova', ona: 'kind_ona',
+    special: 'kind_special', music: 'kind_music',
+};
+
+function updateOngoingMeta() {
+    const el = document.getElementById('ongoing-sub');
+    if (!el) return;
+    el.textContent = ongoingDataSource === 'anilibria' ? t('ongoing_sub_libria') : t('ongoing_sub_mal');
+}
+
+function formatAnimeKind(kind) {
+    const k = (kind || 'tv').toLowerCase();
+    const key = ANIME_KIND_KEYS[k];
+    return key ? t(key) : k.toUpperCase();
+}
+
+function anilibriaPosterUrl(item) {
+    const p = item.poster || {};
+    const rel = p.optimized?.src || p.src || p.preview || p.thumbnail || '';
+    if (!rel) return '';
+    return rel.startsWith('http') ? rel : `${ANILIBRIA_BASE}${rel}`;
+}
+
+function normalizeAnilibriaOngoing(item) {
+    const titleRu = item.name?.main || '';
+    const titleEn = item.name?.english || item.name?.alternative || titleRu;
+    const isAdult = !!item.age_rating?.is_adult;
+    const kind = (item.type?.value || 'tv').toLowerCase();
+    return {
+        id: 90000000 + (item.id || 0),      // отдельное пространство id, чтобы не конфликтовать с MAL
+        alId: item.id,
+        malId: null,
+        source: 'anilibria',
+        searchName: titleEn || titleRu,
+        title: titleRu || titleEn,
+        titleRu,
+        titleEn,
+        displayTitle: currentLang === 'en' ? titleEn : titleRu,
+        tags: (item.genres || []).map(g => g.name).slice(0, 3),
+        rating: '',                          // в каталоге AniLibria рейтинга нет
+        episodes: item.episodes_total || 0,
+        episodesAired: item.latest_episode?.ordinal || 0,
+        image: anilibriaPosterUrl(item),
+        synopsis: item.description || '',
+        synopsisEn: '',
+        year: item.year || '',
+        kind,
+        status: 'ongoing',
+        isAdult,
+        episodesList: [],
+    };
+}
+
+function getOngoingDisplayTitle(anime) {
+    if (currentLang === 'en') return anime.titleEn || anime.title || anime.displayTitle;
+    if (anime.titleRu && /[Ѐ-ӿ]/.test(anime.titleRu)) return anime.titleRu;
+    const cached = getCachedRuTitle(anime.malId || anime.id);
+    if (cached) return cached;
+    return anime.displayTitle || anime.title;
+}
+
+function renderOngoingCards(items) {
+    if (!items.length) return '';
+    return items.map(anime => {
+        if (anime.isAdult) return '';
+        const title = getOngoingDisplayTitle(anime);
+        const meta = [anime.year, formatAnimeKind(anime.kind)].filter(Boolean).join(' • ');
+        const epTotal = anime.episodes || '?';
+        const epBadge = anime.episodesAired > 0
+            ? `${anime.episodesAired}${epTotal !== '?' ? ' / ' + epTotal : ''}`
+            : epTotal;
+        const ratingChip = anime.rating
+            ? `<i data-lucide="star" class="w-3 h-3 fill-yellow-400 text-yellow-400"></i><span>${anime.rating}</span><span class="text-white/50 font-normal">·</span>`
+            : `<i data-lucide="play" class="w-3 h-3 text-airbnb fill-airbnb"></i>`;
+        const onclick = anime.source === 'anilibria'
+            ? `openOngoing(${anime.id})`
+            : `watchAnime(${anime.id})`;
+        return `
+        <article class="ongoing-card anim-item cursor-pointer group" onclick="${onclick}">
+            <div class="relative aspect-[3/4] overflow-hidden rounded-xl bg-gray-100 dark:bg-gray-800 mb-2.5">
+                <img src="${proxyImg(anime.image)}" alt="${escapeHtml(title)}"
+                     class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                     loading="lazy">
+                <div class="absolute top-2 left-2 flex items-center gap-1 px-2 py-1 rounded-lg bg-black/55 backdrop-blur-md text-white text-[11px] font-semibold">
+                    ${ratingChip}
+                    <span class="text-white/90 font-medium">${epBadge}</span>
+                </div>
+            </div>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white line-clamp-2 leading-snug min-h-[2.5rem]" data-title-id="${anime.id}">${escapeHtml(title)}</h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">${escapeHtml(meta || t('episodes_count', anime.episodes || '?'))}</p>
+        </article>`;
+    }).join('');
+}
+
+// Клик по онгоингу AniLibria: у тайтла нет MAL id, поэтому резолвим его
+// через поиск Jikan по названию и открываем штатный плеер.
+async function openOngoing(id) {
+    const anime = ongoingAnime.find(a => a.id === id);
+    if (!anime) return;
+
+    showSection('watch');
+    showAnimeLoadingScreen(anime.searchName || anime.displayTitle || '');
+
+    try {
+        setLoadingProgress('anime', 20);
+        const res = await fetch(
+            `https://api.jikan.moe/v4/anime?q=${encodeURIComponent(anime.searchName)}&limit=1`,
+            { signal: AbortSignal.timeout(12000) }
+        );
+        const data = await res.json();
+        const malId = data.data?.[0]?.mal_id;
+        if (malId) { setLoadingProgress('anime', 45); await fetchAndWatchByMalId(malId); return; }
+    } catch (_) {}
+
+    stopLoadingProgress('anime');
+    const container = document.getElementById('player-container');
+    if (container) container.innerHTML = `
+        <div class="flex flex-col items-center justify-center h-64 gap-4 text-center px-6">
+            <i data-lucide="alert-circle" class="w-10 h-10 text-gray-400"></i>
+            <p class="text-sm text-gray-500 dark:text-gray-400">${escapeHtml(t('ongoing_no_match'))}</p>
+            <button onclick="showSection('home')" class="px-4 py-2 rounded-xl bg-airbnb text-white text-sm font-semibold hover:bg-airbnbDark transition-colors">${t('back_to_catalog')}</button>
+        </div>`;
+    lucide.createIcons();
+}
+
+// ─── Home carousels (rows) ────────────────────────────────────────────────────
+// Категории главной: ongoing (Jikan /seasons/now), top (/top/anime),
+// popular (/top/anime?filter=bypopularity). Те же эндпоинты переиспользуются
+// в секции «Смотреть все» с бесконечной прокруткой.
+
+function categoryEndpoint(cat, page, limit) {
+    const L = limit || PAGE_SIZE;
+    if (cat === 'ongoing') return `https://api.jikan.moe/v4/seasons/now?page=${page}&limit=${L}`;
+    if (cat === 'popular') return `https://api.jikan.moe/v4/top/anime?filter=bypopularity&page=${page}&limit=${L}`;
+    return `https://api.jikan.moe/v4/top/anime?page=${page}&limit=${L}`;
+}
+
+function getRow(cat) {
+    if (cat === 'ongoing') return ongoingAnime;
+    if (cat === 'popular') return popularRowAnime;
+    return topRowAnime;
+}
+function setRow(cat, items) {
+    if (cat === 'ongoing') ongoingAnime = items;
+    else if (cat === 'popular') popularRowAnime = items;
+    else topRowAnime = items;
+}
+
+function mapJikanItem(it) {
+    const a = normalizeAnimeItem(it);
+    a.kind = (it.type || '').toLowerCase() || 'tv';
+    return a;
+}
+
+function renderCarousel(cat) {
+    const track = document.getElementById(`${cat}-track`);
+    if (!track) return;
+    const items = getRow(cat);
+
+    if (rowLoadState[cat] && !items.length) {
+        track.innerHTML = `
+            <div class="ongoing-card flex items-center justify-center aspect-[3/4] rounded-xl bg-gray-100 dark:bg-[#1e1e1e] animate-pulse">
+                <span class="text-xs text-gray-400">${t('ongoing_loading')}</span>
+            </div>`.repeat(5);
+        return;
+    }
+    if (!items.length) {
+        if (rowFailed[cat]) {
+            track.innerHTML = `
+                <div class="flex flex-col items-center justify-center min-w-full py-10 gap-3 text-center">
+                    <p class="text-sm text-gray-500 dark:text-gray-400">${t('ongoing_error')}</p>
+                    <button type="button" onclick="fetchCarousel('${cat}')"
+                        class="px-4 py-2 rounded-xl bg-airbnb text-white text-sm font-semibold hover:bg-airbnbDark transition-colors">${t('ongoing_retry')}</button>
+                </div>`;
+        } else {
+            track.innerHTML = `<div class="text-sm text-gray-500 dark:text-gray-400 py-8 w-full text-center">${t('ongoing_empty')}</div>`;
+        }
+        return;
+    }
+    track.innerHTML = renderOngoingCards(items);
+    if (cat === 'ongoing') updateOngoingMeta();
+    lucide.createIcons();
+    staggerAnimItems(track);
+}
+
+// Совместимость со старым кодом / разметкой
+function renderOngoings() { renderCarousel('ongoing'); }
+function scrollRow(cat, direction) {
+    const track = document.getElementById(`${cat}-track`);
+    if (!track) return;
+    const step = track.clientWidth * 0.85 * (direction < 0 ? -1 : 1);
+    track.scrollBy({ left: step, behavior: 'smooth' });
+}
+function scrollOngoingRow(direction) { scrollRow('ongoing', direction); }
+function viewAllOngoings() { openCategory('ongoing'); }
+
+// AniLibria — запасной источник для онгоингов (работает без VPN)
+async function fetchOngoingFallback() {
+    try {
+        const url = `${ANILIBRIA_BASE}/api/v1/anime/catalog/releases`
+            + `?filter[is_ongoing]=true&limit=${ROW_LIMIT}&page=1&sorting=FRESH_AT_DESC`;
+        const res = await anilibriaFetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!res.ok) throw new Error(`AniLibria HTTP ${res.status}`);
+        const json = await res.json();
+        const items = json.data || json || [];
+        return (Array.isArray(items) ? items : [])
+            .map(normalizeAnilibriaOngoing)
+            .filter(a => a && !a.isAdult);
+    } catch (err) {
+        console.warn('AniLibria fallback unavailable:', err.message);
+        return [];
+    }
+}
+
+async function fetchCarousel(cat) {
+    if (rowLoadState[cat]) return;
+    rowLoadState[cat] = true;
+    rowFailed[cat] = false;
+    renderCarousel(cat);
+
+    try {
+        const res = await fetch(categoryEndpoint(cat, 1, ROW_LIMIT), { signal: AbortSignal.timeout(15000) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const items = (data.data || []).map(mapJikanItem).filter(a => !a.isAdult);
+        if (!items.length) throw new Error('empty');
+        setRow(cat, items);
+        if (cat === 'ongoing') ongoingDataSource = 'jikan';
+    } catch (err) {
+        if (cat === 'ongoing') {
+            const fb = await fetchOngoingFallback();
+            if (fb.length) { setRow('ongoing', fb); ongoingDataSource = 'anilibria'; }
+            else rowFailed.ongoing = true;
+        } else {
+            console.error(`Carousel ${cat} fetch error:`, err);
+            rowFailed[cat] = true;
+        }
+    } finally {
+        rowLoadState[cat] = false;
+        renderCarousel(cat);
+        if (currentLang === 'ru' && getRow(cat).length) {
+            enrichWithRussianTitles(getRow(cat)).then(() => renderCarousel(cat)).catch(() => {});
+        }
+    }
+}
+
+// Грузим карусели последовательно, чтобы не упереться в лимит Jikan (3 req/sec)
+async function loadHomeRows() {
+    renderContinueWatching();
+    renderAdminPicks();
+    ['ongoing', 'top', 'popular'].forEach(renderCarousel);
+    for (const cat of ['ongoing', 'top', 'popular']) {
+        if (!getRow(cat).length && !rowLoadState[cat]) await fetchCarousel(cat);
+    }
+}
+
+// ─── Личные советы от админки (рукописные розовые подписи) ─────────────────────
+// Поставь true, когда начнёшь хостить, — раздел появится внизу главной.
+const ADMIN_PICKS_ENABLED = false;
+// Редактируй этот список: malId аниме + личная подпись, почему именно оно.
+const ADMIN_PICKS = [
+    { malId: 30,    note: 'потому что мне кажется, что аска — это буквально я.' },
+    { malId: 52991, note: 'смотрел под дождь и плакал, фрирен — это про то, как мы не ценим время.' },
+    { malId: 9253,  note: 'эль псай конгру. если любишь, когда мозг кипит — это твоё.' },
+    { malId: 1,     note: 'самый стильный космос. джаз, одиночество и спайк. see you, space cowboy.' },
+    { malId: 37521, note: 'тут больно по-настоящему. торфинн прошёл путь, который я бы не вывез.' },
+    { malId: 34599, note: 'милая картинка обманывает — бездна сожрёт твою душу. обожаю.' },
+];
+const _adminPickCache = {};
+let _adminPicksRendered = false;
+
+async function renderAdminPicks() {
+    const section = document.getElementById('admin-picks-section');
+    if (!section) return;
+    if (!ADMIN_PICKS_ENABLED) { section.classList.add('hidden'); return; }
+    if (_adminPicksRendered) return;
+    _adminPicksRendered = true;
+
+    const cards = ADMIN_PICKS.map(p => `
+        <article class="ongoing-card admin-pick-card cursor-pointer group" onclick="fetchAndWatchByMalId(${p.malId})">
+            <div class="relative aspect-[3/4] overflow-hidden rounded-xl bg-gray-100 dark:bg-gray-800 mb-2.5">
+                <img data-admin-poster="${p.malId}" alt=""
+                     class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy">
+            </div>
+            <h3 class="admin-pick-title text-sm font-semibold text-gray-900 dark:text-white line-clamp-1" data-admin-title="${p.malId}">…</h3>
+            <p class="admin-pick-note">${escapeHtml(p.note)}</p>
+        </article>`).join('');
+
+    section.innerHTML = `
+        <div class="admin-picks-head">
+            <span class="admin-picks-emoji">💗</span>
+            <div>
+                <h2 class="admin-picks-title">${t('admin_picks_title')}</h2>
+                <p class="admin-picks-sub">${t('admin_picks_sub')}</p>
+            </div>
+        </div>
+        <div class="admin-picks-scroll ongoing-scroll flex gap-4 overflow-x-auto pb-2 -mx-1 px-1">${cards}</div>`;
+    lucide.createIcons();
+    loadAdminPickPosters();
+}
+
+async function loadAdminPickPosters() {
+    for (const p of ADMIN_PICKS) {
+        if (_adminPickCache[p.malId] === undefined) {
+            try {
+                const res = await fetch(`https://api.jikan.moe/v4/anime/${p.malId}`,
+                    { signal: AbortSignal.timeout(10000) });
+                const d = await res.json();
+                _adminPickCache[p.malId] = {
+                    img: d.data?.images?.jpg?.large_image_url || d.data?.images?.jpg?.image_url || null,
+                    title: d.data?.title || '',
+                };
+            } catch (_) { _adminPickCache[p.malId] = { img: null, title: '' }; }
+            await new Promise(r => setTimeout(r, 380));  // троттлинг под лимит Jikan
+        }
+        const info = _adminPickCache[p.malId];
+        const img = document.querySelector(`img[data-admin-poster="${p.malId}"]`);
+        if (img && info.img) img.src = proxyImg(info.img);
+        const titleEl = document.querySelector(`[data-admin-title="${p.malId}"]`);
+        if (titleEl && info.title) titleEl.textContent = info.title;
+    }
+}
+
+// Обратная совместимость: старое имя
+function fetchOngoings() { return fetchCarousel('ongoing'); }
+
+// ─── Category list / «Смотреть все» ───────────────────────────────────────────
+
+async function fetchCategory({ cat = 'top', page = 1, append = false } = {}) {
+    if (currentSearchController) { currentSearchController.abort(); currentSearchController = null; }
+    const requestToken = ++latestSearchToken;
+    currentSearchController = new AbortController();
+    if (!append) setCatalogLoadingState(true);
+
+    try {
+        const res = await fetch(categoryEndpoint(cat, page, PAGE_SIZE), { signal: currentSearchController.signal });
+        const data = await res.json();
+        if (requestToken !== latestSearchToken) return;
+
+        const items = (data.data || []).map(mapJikanItem);
+        currentCatalogMode = cat;
+        listCategory = cat;
+        currentCatalogQuery = '';
+        currentCatalogPage = page;
+        hasMoreAnime = Boolean(data.pagination?.has_next_page);
+        recommendedAnime = [];
+        animeData = append ? mergeAnimeResults(animeData, items) : items;
+    } catch (error) {
+        if (error.name === 'AbortError') return;
+        console.error('Category fetch error:', error);
+    } finally {
+        if (requestToken === latestSearchToken) {
+            currentSearchController = null;
+            isLoadingMore = false;
+            setCatalogLoadingState(false);
+            if (currentSection === 'list') renderCatalog(append);
+        }
+    }
+}
+
+async function renderCategoryView(cat) {
+    listCategory = cat;
+    currentCatalogMode = cat;
+    currentCatalogQuery = '';
+    currentCatalogPage = 1;
+    hasMoreAnime = true;
+    animeData = [];
+    isSearching = false;
+    selectedGenres.clear();
+    showSection('list');
+    updateCatalogMeta();
+    renderSortPanel();
+    renderCatalog();
+    await fetchCategory({ cat, page: 1, append: false });
+}
+
+function openCategory(cat) {
+    renderCategoryView(cat);
+    history.pushState({ category: cat, fromHome: true }, '', '#cat/' + cat);
+    document.title = 'AnyRainy';
+}
+
+// Полный каталог — открывается из кнопки «Каталог» в навигации и CTA-кнопки внизу главной.
+async function openCatalog({ fromHistory = false } = {}) {
+    if (currentSearchController) {
+        currentSearchController.abort();
+        currentSearchController = null;
+    }
+    latestSearchToken++;
+    currentCatalogMode = 'full';
+    listCategory = 'top';
+    currentCatalogQuery = '';
+    currentCatalogPage = 1;
+    hasMoreAnime = true;
+    animeData = [];
+    isSearching = false;
+    selectedGenres.clear();
+    genreFilterOpen = false;
+    sortPanelOpen = false;
+    syncSearchInputs('');
+    showSection('list');
+    if (!fromHistory) history.pushState({ catalog: true }, '', '#catalog');
+    document.title = 'AnyRainy';
+    updateCatalogMeta();
+    renderSortPanel();
+    renderCatalog();
+    await fetchTopAnime({ page: 1, append: false, mode: 'full' });
+}
+
+function goHome() {
+    if (currentSearchController) {
+        currentSearchController.abort();
+        currentSearchController = null;
+    }
+    latestSearchToken++;
+    isSearching = false;
+    sortPanelOpen = false;
+    genreFilterOpen = false;
+    syncSearchInputs('');
+    if (location.hash) history.replaceState({}, '', location.pathname);
+    showSection('home');
+}
+
+function closeCategory() {
+    if (location.hash.startsWith('#cat/') && history.length > 1) {
+        history.back();
+    } else {
+        goHome();
+    }
+}
+
+function playRandomAnime() {
+    const pool = [...topRowAnime, ...popularRowAnime, ...ongoingAnime].filter(a => a.malId);
+    if (pool.length) {
+        const pick = pool[Math.floor(Math.random() * pool.length)];
+        watchAnime(pick.id);
+        return;
+    }
+    const page = Math.floor(Math.random() * 20) + 1;
+    fetch(`https://api.jikan.moe/v4/top/anime?page=${page}&limit=25`)
+        .then(r => r.json())
+        .then(d => {
+            const list = (d.data || []).map(normalizeAnimeItem).filter(a => !a.isAdult);
+            if (!list.length) return;
+            const pick = list[Math.floor(Math.random() * list.length)];
+            if (!animeData.find(a => a.id === pick.id)) animeData.push(pick);
+            watchAnime(pick.id);
+        })
+        .catch(() => {});
+}
+
+function goBackFromWatch() {
+    if (location.hash && history.length > 1) history.back();
+    else showSection('home');
+}
 
 function getCachedRuTitle(malId) {
     return localStorage.getItem(`anyrainy_title_ru_${malId}`) || null;
@@ -1678,9 +2950,26 @@ function setCachedRuTitle(malId, title) {
     localStorage.setItem(`anyrainy_title_ru_${malId}`, title);
 }
 
-// Обогащает список аниме русскими названиями через один батч-запрос к Shikimori.
-// Для тех, кого нет в Shikimori — fallback через mymemory (как синопсисы).
-async function enrichWithShikimoriTitles(items) {
+// ─── Russian titles (Kodik → MyMemory, без Shikimori) ────────────────────────
+
+function applyRussianTitle(anime, ruTitle) {
+    if (!ruTitle || !/[Ѐ-ӿ]/.test(ruTitle)) return;
+    const malId = anime.malId || anime.id;
+    setCachedRuTitle(malId, ruTitle);
+    anime.titleRu = ruTitle;
+    anime.displayTitle = ruTitle;
+    document.querySelectorAll(`[data-title-id="${anime.id}"]`).forEach(el => { el.textContent = ruTitle; });
+}
+
+async function runPool(items, concurrency, worker) {
+    const queue = [...items];
+    const runners = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+        while (queue.length) await worker(queue.shift());
+    });
+    await Promise.all(runners);
+}
+
+async function enrichWithRussianTitles(items) {
     if (currentLang !== 'ru') return;
 
     const toEnrich = items.filter(a => {
@@ -1690,57 +2979,53 @@ async function enrichWithShikimoriTitles(items) {
     });
     if (!toEnrich.length) return;
 
-    const ids = [...new Set(toEnrich.map(a => a.malId || a.id).filter(Boolean))];
-
-    // Шаг 1: Один запрос к Shikimori для всех аниме на странице
-    const shikiMap = {};
-    try {
-        const res = await fetch(`${SHIKIMORI_BASE}/api/animes?ids=${ids.join(',')}&limit=50`);
-        if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data)) {
-                data.forEach(item => {
-                    if (item.id && item.russian && /[Ѐ-ӿ]/.test(item.russian)) {
-                        shikiMap[item.id] = item.russian;
-                        setCachedRuTitle(item.id, item.russian);
-                    }
-                });
-            }
-        }
-    } catch (_) {}
-
-    const stillMissing = [];
     toEnrich.forEach(anime => {
+        const cached = getCachedRuTitle(anime.malId || anime.id);
+        if (cached) applyRussianTitle(anime, cached);
+    });
+
+    const stillMissing = toEnrich.filter(a => !(a.titleRu && /[Ѐ-ӿ]/.test(a.titleRu)));
+    if (!stillMissing.length) return;
+
+    const afterKodik = [];
+    await runPool(stillMissing, 4, async (anime) => {
         const malId = anime.malId || anime.id;
-        const ruTitle = shikiMap[malId];
-        if (ruTitle) {
-            anime.titleRu = ruTitle;
-            anime.displayTitle = ruTitle;
-            document.querySelectorAll(`[data-title-id="${anime.id}"]`).forEach(el => { el.textContent = ruTitle; });
-        } else {
-            stillMissing.push(anime);
+        if (!malId) { afterKodik.push(anime); return; }
+        try {
+            const res = await fetch(
+                `https://kodik-api.com/search?token=${KODIK_TOKEN}&shikimori_id=${malId}&with_material_data=true&limit=1`,
+                { signal: AbortSignal.timeout(8000) }
+            );
+            if (!res.ok) { afterKodik.push(anime); return; }
+            const data = await res.json();
+            const item = data.results?.[0];
+            const md = item?.material_data || {};
+            const ruTitle = (md.anime_title || md.title || item?.title || '').replace(/\s*\[ТВ[^\]]*\]\s*/gi, '').trim();
+            if (ruTitle && /[Ѐ-ӿ]/.test(ruTitle)) applyRussianTitle(anime, ruTitle);
+            else afterKodik.push(anime);
+        } catch (_) {
+            afterKodik.push(anime);
         }
     });
 
-    // Шаг 2: Fallback через mymemory для тех, кого нет в Shikimori (редко)
-    if (stillMissing.length) {
-        await Promise.allSettled(stillMissing.map(async anime => {
-            const malId = anime.malId || anime.id;
+    if (afterKodik.length && Date.now() >= _myMemoryBlockedUntil) {
+        await Promise.allSettled(afterKodik.map(async anime => {
             const src = anime.titleEn || anime.title || '';
             if (!src || /[Ѐ-ӿ]/.test(src)) return;
+            if (Date.now() < _myMemoryBlockedUntil) return;
             try {
                 const res = await fetch(
-                    `https://api.mymemory.translated.net/get?q=${encodeURIComponent(src)}&langpair=en|ru`
+                    `https://api.mymemory.translated.net/get?q=${encodeURIComponent(src)}&langpair=en|ru`,
+                    { signal: AbortSignal.timeout(8000) }
                 );
-                if (!res.ok) return;
                 const data = await res.json();
-                const tr = data.responseData?.translatedText;
-                if (tr && data.responseStatus === 200 && /[Ѐ-ӿ]/.test(tr)) {
-                    setCachedRuTitle(malId, tr);
-                    anime.titleRu = tr;
-                    anime.displayTitle = tr;
-                    document.querySelectorAll(`[data-title-id="${anime.id}"]`).forEach(el => { el.textContent = tr; });
+                if (isMyMemoryRateLimited(res, data)) {
+                    _myMemoryBlockedUntil = Date.now() + 120000;
+                    return;
                 }
+                if (!res.ok) return;
+                const tr = data.responseData?.translatedText;
+                if (tr && data.responseStatus === 200 && /[Ѐ-ӿ]/.test(tr)) applyRussianTitle(anime, tr);
             } catch (_) {}
         }));
     }
@@ -1761,16 +3046,69 @@ function sortAnimeList(items) {
 
 function setSortMode(mode) {
     currentSortMode = mode;
-    if (currentCatalogMode !== 'search') {
-        // Re-fetch with new sort from page 1
-        animeData = [];
-        hasMoreAnime = true;
-        currentCatalogPage = 1;
-        renderCatalog();
-        fetchTopAnime({ page: 1, append: false });
+    sortPanelOpen = false;
+    updateSortPanelUI();
+    animeData = [];
+    hasMoreAnime = true;
+    currentCatalogPage = 1;
+    renderCatalog();
+    updateCatalogMeta();
+    if (currentCatalogMode === 'search') {
+        handleSearch({ scrollToResults: false });
+    } else if (currentCatalogMode === 'full') {
+        fetchTopAnime({ page: 1, append: false, mode: 'full' });
+    } else if (['ongoing', 'top', 'popular'].includes(currentCatalogMode)) {
+        fetchCategory({ cat: currentCatalogMode, page: 1, append: false });
     } else {
-        renderCatalog();
+        fetchTopAnime({ page: 1, append: false, mode: 'full' });
     }
+}
+
+function renderSortPanel() {
+    const labels = { default: t('sort_default'), rating: t('sort_rating'), title: t('sort_title') };
+    document.querySelectorAll('.sort-option').forEach(btn => {
+        const mode = btn.dataset.sort;
+        if (mode && labels[mode]) btn.textContent = labels[mode];
+    });
+    const sortBtn = document.getElementById('sort-toggle-btn');
+    if (sortBtn) sortBtn.title = t('sort_label');
+    updateSortPanelUI();
+}
+
+function updateSortPanelUI() {
+    document.querySelectorAll('.sort-option').forEach(btn => {
+        btn.classList.toggle('sort-option--active', btn.dataset.sort === currentSortMode);
+    });
+    const sortBtn = document.getElementById('sort-toggle-btn');
+    const panel = document.getElementById('sort-panel');
+    sortBtn?.classList.toggle('is-open', sortPanelOpen);
+    panel?.classList.toggle('hidden', !sortPanelOpen);
+}
+
+function toggleSortPanel() {
+    sortPanelOpen = !sortPanelOpen;
+    if (sortPanelOpen) {
+        genreFilterOpen = false;
+        document.getElementById('genre-filter-panel')?.classList.add('hidden');
+        document.getElementById('genre-toggle-btn')?.classList.remove('bg-airbnb', 'text-white', 'border-airbnb');
+        renderSortPanel();
+    }
+    updateSortPanelUI();
+    lucide.createIcons();
+}
+
+function selectSortMode(mode) {
+    if (mode === currentSortMode) {
+        sortPanelOpen = false;
+        updateSortPanelUI();
+        return;
+    }
+    setSortMode(mode);
+}
+
+function closeSortPanel() {
+    sortPanelOpen = false;
+    updateSortPanelUI();
 }
 
 // ─── Genre filter ─────────────────────────────────────────────────────────────
@@ -1793,7 +3131,10 @@ function setGenreMode(mode) {
     genreFilterMode = mode;
     renderGenreFilterList();
     const grid = document.getElementById('anime-grid');
-    if (grid) { grid.innerHTML = renderAnimeCards(filterByGenres(sortAnimeList(animeData))); lucide.createIcons(); }
+    if (grid) {
+        grid.innerHTML = renderAnimeCards(filterByGenres(sortAnimeList(animeData)));
+        refreshAnimeGrid(grid);
+    }
 }
 
 function toggleGenre(genre) {
@@ -1801,7 +3142,10 @@ function toggleGenre(genre) {
     else selectedGenres.add(genre);
     renderGenreFilterList();
     const grid = document.getElementById('anime-grid');
-    if (grid) { grid.innerHTML = renderAnimeCards(filterByGenres(sortAnimeList(animeData))); lucide.createIcons(); }
+    if (grid) {
+        grid.innerHTML = renderAnimeCards(filterByGenres(sortAnimeList(animeData)));
+        refreshAnimeGrid(grid);
+    }
 }
 
 function clearGenres() {
@@ -1811,7 +3155,10 @@ function clearGenres() {
     if (inp) inp.value = '';
     renderGenreFilterList();
     const grid = document.getElementById('anime-grid');
-    if (grid) { grid.innerHTML = renderAnimeCards(sortAnimeList(animeData)); lucide.createIcons(); }
+    if (grid) {
+        grid.innerHTML = renderAnimeCards(sortAnimeList(animeData));
+        refreshAnimeGrid(grid);
+    }
 }
 
 function filterGenreSearch(q) {
@@ -1821,6 +3168,7 @@ function filterGenreSearch(q) {
 
 function toggleGenrePanel() {
     genreFilterOpen = !genreFilterOpen;
+    if (genreFilterOpen) closeSortPanel();
     const panel = document.getElementById('genre-filter-panel');
     const btn = document.getElementById('genre-toggle-btn');
     if (!panel) return;
@@ -1932,9 +3280,9 @@ function renderAnimeCards(items, emptyMessage = '') {
             ? (anime.titleEn || anime.title || anime.displayTitle)
             : (cachedRu || (anime.titleRu && /[Ѐ-ӿ]/.test(anime.titleRu) ? anime.titleRu : null) || anime.displayTitle || anime.title);
         return `
-        <div class="cursor-pointer group" onclick="watchAnime(${anime.id})">
+        <div class="cursor-pointer group anim-item" onclick="watchAnime(${anime.id})">
             <div class="relative aspect-[3/4] overflow-hidden rounded-xl mb-3 bg-gray-100 dark:bg-gray-800">
-                <img src="${anime.image}"
+                <img src="${proxyImg(anime.image)}"
                      alt="${escapeHtml(title)}"
                      class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                      loading="lazy">
@@ -1973,6 +3321,19 @@ function updateCatalogMeta() {
     if (currentCatalogMode === 'search' && currentCatalogQuery) {
         subtitle.innerText = t('search_found_label', currentCatalogQuery);
         description.innerText = t('search_results_sub');
+        return;
+    }
+
+    const catTitles = { ongoing: t('ongoing_title'), top: t('cat_top_title'), popular: t('cat_popular_title') };
+    const catDescs = { ongoing: t('ongoing_sub_mal'), top: t('cat_top_sub'), popular: t('cat_popular_sub') };
+    if (currentCatalogMode === 'full') {
+        subtitle.innerText = t('catalog_full_title');
+        description.innerText = t('catalog_full_desc');
+        return;
+    }
+    if (catTitles[currentCatalogMode]) {
+        subtitle.innerText = catTitles[currentCatalogMode];
+        description.innerText = catDescs[currentCatalogMode];
         return;
     }
 
@@ -2018,6 +3379,7 @@ function renderRecommendations() {
 
     section.classList.remove('hidden');
     grid.innerHTML = renderAnimeCards(sortAnimeList(recommendedAnime), t('no_recommendations'));
+    staggerAnimItems(grid);
 }
 
 async function fetchRecommendations(excludedAnime = []) {
@@ -2056,13 +3418,18 @@ async function fetchRecommendations(excludedAnime = []) {
 
 async function translateQueryForSearch(query) {
     if (!query || !/[Ѐ-ӿ]/.test(query)) return null;
+    if (Date.now() < _myMemoryBlockedUntil) return null;
     try {
         const res = await fetch(
             `https://api.mymemory.translated.net/get?q=${encodeURIComponent(query)}&langpair=ru|en`,
             { signal: AbortSignal.timeout(3000) }
         );
-        if (!res.ok) return null;
         const data = await res.json();
+        if (isMyMemoryRateLimited(res, data)) {
+            _myMemoryBlockedUntil = Date.now() + 120000;
+            return null;
+        }
+        if (!res.ok) return null;
         const translated = data.responseData?.translatedText;
         if (translated && data.responseStatus === 200 && translated.toLowerCase() !== query.toLowerCase()) return translated;
     } catch (_) {}
@@ -2089,7 +3456,10 @@ function renderCatalogActions() {
         return;
     }
 
-    const sourceLabel = currentCatalogMode === 'search' ? t('source_search') : t('source_top');
+    const catSource = { ongoing: t('ongoing_title'), top: t('cat_top_title'), popular: t('cat_popular_title'), full: t('catalog_full_title') };
+    const sourceLabel = currentCatalogMode === 'search'
+        ? t('source_search')
+        : (catSource[currentCatalogMode] || t('source_top'));
 
     if (!hasMoreAnime) {
         actions.innerHTML = `<div class="text-center text-sm text-gray-500 dark:text-gray-400">${sourceLabel}. ${t('no_more')}</div>`;
@@ -2121,7 +3491,7 @@ function setupInfiniteCatalogLoading() {
     catalogLoadObserver = new IntersectionObserver((entries) => {
         entries.forEach(entry => {
             if (!entry.isIntersecting) return;
-            if (currentSection !== 'home') return;
+            if (currentSection !== 'list') return;
             if (isSearching || isLoadingMore || !hasMoreAnime) return;
             loadMoreAnime();
         });
@@ -2158,7 +3528,7 @@ async function fetchAnimePage({ query = '', page = 1, signal, orderBy = '' } = {
     };
 }
 
-async function fetchTopAnime({ page = 1, append = false } = {}) {
+async function fetchTopAnime({ page = 1, append = false, mode = 'full' } = {}) {
     if (currentSearchController) {
         currentSearchController.abort();
         currentSearchController = null;
@@ -2169,7 +3539,7 @@ async function fetchTopAnime({ page = 1, append = false } = {}) {
 
     if (!append) setCatalogLoadingState(true);
 
-    const orderBy = currentSortMode === 'title' ? 'title' : '';
+    const orderBy = currentSortMode === 'title' ? 'title' : currentSortMode === 'rating' ? 'score' : '';
 
     try {
         const result = await fetchAnimePage({
@@ -2180,7 +3550,7 @@ async function fetchTopAnime({ page = 1, append = false } = {}) {
 
         if (requestToken !== latestSearchToken) return;
 
-        currentCatalogMode = 'top';
+        if (!append) currentCatalogMode = mode;
         currentCatalogQuery = '';
         currentCatalogPage = page;
         hasMoreAnime = result.hasNextPage;
@@ -2194,7 +3564,7 @@ async function fetchTopAnime({ page = 1, append = false } = {}) {
             currentSearchController = null;
             isLoadingMore = false;
             setCatalogLoadingState(false);
-            if (currentSection === 'home') renderCatalog();
+            if (currentSection === 'list') renderCatalog(append);
         }
     }
 }
@@ -2214,14 +3584,15 @@ async function handleSearch({ scrollToResults = false, source = '' } = {}) {
         latestSearchToken++;
         latestRecommendationToken++;
         currentCatalogMode = 'top';
+        listCategory = 'top';
         currentCatalogQuery = '';
         currentCatalogPage = 1;
         hasMoreAnime = true;
         recommendedAnime = [];
-        if (subtitle) subtitle.innerText = t('popular_now');
         isSearching = false;
         setCatalogLoadingState(false);
-        fetchTopAnime({ page: 1, append: false });
+        // Пустой запрос: если мы в списке — показываем «Лучшее за всё время»
+        if (currentSection === 'list') fetchCategory({ cat: 'top', page: 1, append: false });
         return;
     }
 
@@ -2234,6 +3605,18 @@ async function handleSearch({ scrollToResults = false, source = '' } = {}) {
         setCatalogLoadingState(false);
         renderRecommendations();
         return;
+    }
+
+    // Поиск показываем в секции списка
+    if (currentSection !== 'list') {
+        showSection('list', { preserveScroll: true });
+        // строка поиска в герое скрылась — переносим фокус в нав-поиск
+        const navInput = document.getElementById('nav-search-input');
+        if (navInput) {
+            navInput.focus();
+            const v = navInput.value;
+            try { navInput.setSelectionRange(v.length, v.length); } catch (_) {}
+        }
     }
 
     isSearching = true;
@@ -2319,13 +3702,17 @@ async function loadMoreAnime() {
         return;
     }
 
-    fetchTopAnime({ page: nextPage, append: true });
+    if (currentCatalogMode === 'full') {
+        fetchTopAnime({ page: nextPage, append: true, mode: 'full' });
+        return;
+    }
+
+    fetchCategory({ cat: listCategory, page: nextPage, append: true });
 }
 
 function triggerSearch(source = '') {
     clearTimeout(searchTimeout);
-    if (currentSection !== 'home') showSection('home', { preserveScroll: true });
-    handleSearch({ scrollToResults: true, source });
+    handleSearch({ scrollToResults: false, source });
 }
 
 // Live search listeners
@@ -2386,104 +3773,385 @@ async function fetchEpisodes(anime) {
         if (data.data) {
             anime.episodesList = data.data.map(ep => ep.title || t('episode_select', ep.mal_id));
         }
+        if (currentAnime?.id === anime.id) refreshPlayerChrome();
     } catch (error) {
         anime.episodesList = Array.from({ length: anime.episodes }, (_, i) => t('episode_select', i + 1));
+        if (currentAnime?.id === anime.id) refreshPlayerChrome();
     }
 }
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
 
+const MODAL_ANIM_MS = 300;
+
+function reducedMotion() {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function openModalOverlay(el, { lockScroll = true } = {}) {
+    if (!el) return;
+    el.classList.remove('hidden');
+    if (lockScroll) document.body.style.overflow = 'hidden';
+    requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('is-open')));
+}
+
+function closeModalOverlay(el, { unlockScroll = true } = {}) {
+    if (!el || el.classList.contains('hidden')) return;
+    el.classList.remove('is-open');
+    setTimeout(() => {
+        if (!el.classList.contains('is-open')) {
+            el.classList.add('hidden');
+            if (unlockScroll) document.body.style.overflow = '';
+        }
+    }, MODAL_ANIM_MS);
+}
+
+function animateSection(sectionEl) {
+    if (!sectionEl || reducedMotion()) return;
+    sectionEl.classList.remove('section-enter');
+    void sectionEl.offsetWidth;
+    sectionEl.classList.add('section-enter');
+}
+
+function staggerAnimItems(root, selector = '.anim-item') {
+    if (!root || reducedMotion()) return;
+    root.querySelectorAll(selector).forEach((el, i) => {
+        el.style.setProperty('--i', String(Math.min(i, 24)));
+        el.classList.remove('anim-item-play');
+        void el.offsetWidth;
+        el.classList.add('anim-item-play');
+    });
+}
+
+function staggerAnimBlocks(root, selector = '.anim-block') {
+    if (!root || reducedMotion()) return;
+    root.querySelectorAll(selector).forEach((el, i) => {
+        el.style.setProperty('--i', String(i));
+        el.classList.remove('anim-block-play');
+        void el.offsetWidth;
+        el.classList.add('anim-block-play');
+    });
+}
+
+function refreshAnimeGrid(grid) {
+    if (!grid) return;
+    lucide.createIcons();
+    staggerAnimItems(grid);
+}
+
 function stopActivePlayer() {
+    if (currentAnime && currentSection === 'watch') saveWatchProgress(currentAnime);
     stopLibriaGL();
     if (libriaHls) { libriaHls.destroy(); libriaHls = null; }
     if (kodikHls)  { kodikHls.destroy();  kodikHls  = null; }
-    if (kodikKeyListener) { document.removeEventListener('keydown', kodikKeyListener); kodikKeyListener = null; }
-    const viewport = document.getElementById('player-viewport');
-    if (viewport) viewport.innerHTML = '';
 }
 
 function showSection(sectionId, { preserveScroll = false } = {}) {
     if (sectionId === 'admin') { openAdminModal(); return; }
     if (sectionId === 'profile') { showProfilePage(null); return; }
+    if (sectionId === 'catalog') { openCatalog(); return; }
     // Stop video/audio when leaving the watch section
     if (currentSection === 'watch' && sectionId !== 'watch') stopActivePlayer();
-    if (sectionId !== 'watch') clearAnimeUrl();
+    // hash для секции списка ставит openCategory, поэтому его не трогаем
+    if (sectionId !== 'watch' && sectionId !== 'list') clearAnimeUrl();
 
     document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
 
-    const targetSection = sectionId === 'catalog' ? 'home' : sectionId;
-    const sectionEl = document.getElementById(`${targetSection}-section`);
-    if (sectionEl) sectionEl.classList.remove('hidden');
+    const sectionEl = document.getElementById(`${sectionId}-section`);
+    if (sectionEl) {
+        sectionEl.classList.remove('hidden');
+        animateSection(sectionEl);
+    }
 
-    currentSection = targetSection;
+    currentSection = sectionId;
     updateMobileNavActive(sectionId);
 
-    if (sectionId === 'catalog') {
-        setTimeout(() => {
-            const target = document.getElementById('catalog-subtitle') || document.getElementById('catalog-container');
-            if (target) {
-                const y = target.getBoundingClientRect().top + window.scrollY - 90;
-                window.scrollTo({ top: y, behavior: 'smooth' });
-            }
-        }, 30);
-    } else if (!preserveScroll) {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
+    if (!preserveScroll) window.scrollTo({ top: 0, behavior: 'smooth' });
 
-    if (targetSection === 'home') {
-        if (animeData.length === 0) fetchTopAnime();
-        renderCatalog();
-        window.dispatchEvent(new Event('scroll'));
+    if (sectionId === 'home') {
+        loadHomeRows();
     }
-    if (targetSection === 'watch') {
-        window.dispatchEvent(new Event('scroll'));
-    }
+    requestAnimationFrame(() => {
+        if (sectionEl) {
+            staggerAnimBlocks(sectionEl);
+            staggerAnimItems(sectionEl);
+        }
+    });
+    // показать нав-поиск вне главной
+    window.dispatchEvent(new Event('scroll'));
 }
 
-function renderCatalog() {
+function renderCatalog(append = false) {
     const grid = document.getElementById('anime-grid');
     if (!grid) return;
     renderGenreFilter();
-    grid.innerHTML = renderAnimeCards(filterByGenres(sortAnimeList(animeData)));
+
+    const list = filterByGenres(sortAnimeList(animeData));
+    // Догрузка без перерисовки всего грида: дописываем только новые карточки.
+    // Возможно только при дефолтной сортировке и без фильтра по жанрам (иначе порядок/набор меняется).
+    const canAppend = append
+        && currentSortMode === 'default' && selectedGenres.size === 0
+        && grid.children.length > 0 && grid.children.length < list.length;
+
+    if (canAppend) {
+        const startIdx = grid.children.length;
+        grid.insertAdjacentHTML('beforeend', renderAnimeCards(list.slice(startIdx)));
+        lucide.createIcons();
+        animateNewCards(Array.from(grid.children).slice(startIdx));
+    } else {
+        grid.innerHTML = renderAnimeCards(list);
+        refreshAnimeGrid(grid);
+    }
+
     updateCatalogMeta();
     renderRecommendations();
-    lucide.createIcons();
     setCatalogLoadingState(isSearching);
     renderCatalogActions();
-    // Асинхронно обогащаем русскими названиями (1 запрос к Shikimori)
-    if (currentLang === 'ru') enrichWithShikimoriTitles(animeData);
+    // Асинхронно обогащаем русскими названиями (Kodik API)
+    if (currentLang === 'ru') enrichWithRussianTitles(animeData);
+}
+
+// Анимируем только что добавленные карточки (без трогания уже отрисованных → нет мигания)
+function animateNewCards(cards) {
+    if (reducedMotion()) return;
+    cards.forEach((el, i) => {
+        if (!el.classList?.contains('anim-item')) return;
+        el.style.setProperty('--i', String(Math.min(i, 12)));
+        el.classList.add('anim-item-play');
+    });
 }
 
 // ─── Watch ────────────────────────────────────────────────────────────────────
 
-async function watchAnime(id) {
+const LOADING_HINTS = {
+    ru: [
+        'Ищем лучшую озвучку для вас...',
+        'Подогреваем рамен — скоро начнётся...',
+        'Синхронизируем субтитры с вселенной...',
+        'Уговариваем CDN не лагать...',
+        'Настраиваем OP на максимальную громкость...',
+        'Это не баг, это аниме...',
+        'Загружаем plot twist...',
+        'Котики на сервере уже смотрят...',
+        'Почти готово — не перематывай!',
+        'Спрашиваем у MyAnimeList рейтинг...',
+        'Достаём попкорн — контент уже едет...',
+        'Делаем magic — осталось чуть-чуть...',
+    ],
+    en: [
+        'Finding the best dub for you...',
+        'Heating up the ramen...',
+        'Syncing subtitles with the universe...',
+        'Asking the CDN nicely not to lag...',
+        'Cranking the OP volume to max...',
+        "It's not a bug, it's anime...",
+        'Loading plot twist...',
+        'Cats on the server are already watching...',
+        "Almost ready — don't skip yet!",
+        'Asking MyAnimeList for the score...',
+        'Grabbing popcorn... I mean, content...',
+        'Working some magic — almost there...',
+    ],
+};
+
+let _loadProgress = {};
+let _loadTimers = {};
+let _loadHintTimers = {};
+
+function pickLoadingHint() {
+    const hints = LOADING_HINTS[currentLang === 'ru' ? 'ru' : 'en'];
+    return hints[Math.floor(Math.random() * hints.length)];
+}
+
+function buildLoadingOverlayContent(prefix, dark = false) {
+    const trackClass = dark ? 'bg-white/10' : 'bg-gray-200 dark:bg-[#2a2a2a]';
+    const pctClass = dark ? 'text-white/40' : 'text-gray-400 dark:text-gray-500';
+    const hintClass = dark ? 'text-white/75' : 'text-gray-600 dark:text-gray-300';
+    return `
+        <div class="flex flex-col items-center gap-3 w-full max-w-xs px-2">
+            <div class="w-full h-2 ${trackClass} rounded-full overflow-hidden">
+                <div id="${prefix}-loading-bar" class="loading-progress-bar h-full rounded-full" style="width:0%"></div>
+            </div>
+            <div class="flex justify-between w-full text-[10px] ${pctClass} tabular-nums uppercase tracking-wider">
+                <span id="${prefix}-loading-pct">0%</span>
+                <span>AnyRainy</span>
+            </div>
+            <p id="${prefix}-loading-hint" class="loading-hint text-sm font-medium text-center min-h-[2.5rem] leading-snug ${hintClass}">${escapeHtml(pickLoadingHint())}</p>
+        </div>`;
+}
+
+function setLoadingProgressUI(prefix, value) {
+    const v = Math.min(100, Math.max(0, value));
+    _loadProgress[prefix] = v;
+    const bar = document.getElementById(`${prefix}-loading-bar`);
+    const pct = document.getElementById(`${prefix}-loading-pct`);
+    if (bar) bar.style.width = v + '%';
+    if (pct) pct.textContent = Math.round(v) + '%';
+}
+
+function setLoadingProgress(prefix, value) {
+    const cur = _loadProgress[prefix] || 0;
+    setLoadingProgressUI(prefix, Math.max(cur, value));
+}
+
+function startLoadingProgress(prefix, cap = 92) {
+    stopLoadingProgress(prefix, false);
+    _loadProgress[prefix] = 0;
+    setLoadingProgressUI(prefix, 0);
+    _loadTimers[prefix] = setInterval(() => {
+        const cur = _loadProgress[prefix] || 0;
+        if (cur >= cap) return;
+        setLoadingProgressUI(prefix, cur + Math.random() * 4 + 1);
+    }, 380);
+    _loadHintTimers[prefix] = setInterval(() => {
+        const el = document.getElementById(`${prefix}-loading-hint`);
+        if (!el) return;
+        el.textContent = pickLoadingHint();
+        el.classList.remove('loading-hint--pop');
+        void el.offsetWidth;
+        el.classList.add('loading-hint--pop');
+    }, 2600);
+}
+
+function finishLoadingProgress(prefix) {
+    setLoadingProgressUI(prefix, 100);
+}
+
+function stopLoadingProgress(prefix, resetProgress = true) {
+    clearInterval(_loadTimers[prefix]);
+    clearInterval(_loadHintTimers[prefix]);
+    delete _loadTimers[prefix];
+    delete _loadHintTimers[prefix];
+    if (resetProgress) delete _loadProgress[prefix];
+}
+
+function showAnimeLoadingScreen(title) {
+    stopLoadingProgress('anime');
+    const container = document.getElementById('player-container');
+    if (!container) return;
+    container.innerHTML = `
+        <div id="anime-loading-screen" class="anime-loading-screen flex flex-col items-center justify-center min-h-[420px] gap-5 px-6 py-12">
+            ${title ? `<p class="text-base font-bold text-gray-900 dark:text-white truncate max-w-md text-center">${escapeHtml(title)}</p>` : ''}
+            ${buildLoadingOverlayContent('anime', false)}
+        </div>`;
+    startLoadingProgress('anime');
+}
+
+async function watchAnime(id, { episode = 1, resume = null } = {}) {
     const token = ++watchToken;
     currentAnime = findAnimeById(id);
     if (!currentAnime) return;
-    currentEpisodeNum = 1;
-    currentServerIndex = 0;
-    currentPlayerVoiceIdx = 0;
+
+    window._resumePosition = resume?.position > 0 ? resume.position : null;
+
+    if (resume) {
+        window._allohaAutoFallback = false; // продолжение просмотра — плеер уже выбран пользователем
+        currentEpisodeNum = Math.max(1, resume.episode || episode);
+        currentServerIndex = clampResumeServerIndex(resume.serverIndex, resume.serverType);
+        currentKodikTranslationIdx = resume.kodikTranslationIdx ?? 0;
+        currentPlayerVoiceIdx = 0;
+        if (resume.libriaQuality) {
+            libriaCurrentQuality = resume.libriaQuality;
+            libriaUpscale4K = resume.libriaQuality === '4K ✦';
+            window._pendingLibriaQuality = resume.libriaQuality;
+        } else {
+            window._pendingLibriaQuality = null;
+        }
+        if (resume.kodikQuality) {
+            kodikCurrentQuality = resume.kodikQuality;
+            window._pendingKodikQuality = resume.kodikQuality;
+        } else {
+            window._pendingKodikQuality = null;
+        }
+    } else {
+        currentEpisodeNum = Math.max(1, episode);
+        // Приоритетный плеер по умолчанию — Aloha; фолбэк на AniLibria, затем первый доступный
+        const allohaIdx = getWatchPlayerIndex('alloha');
+        currentServerIndex = allohaIdx >= 0 ? allohaIdx : Math.max(0, getWatchPlayerIndex('libria'));
+        // Если Aloha не сможет резолвиться (нет Kinopoisk id) — один раз авто-переключимся
+        window._allohaAutoFallback = allohaIdx >= 0;
+        watchSidebarTab = 'player';
+        currentPlayerVoiceIdx = 0;
+        currentKodikTranslationIdx = 0;
+        window._pendingLibriaQuality = null;
+        window._pendingKodikQuality = null;
+        window._resumePosition = null;
+    }
+
     currentKodikTranslations = [];
-    currentKodikTranslationIdx = 0;
+    currentKodikEpisodeNums = [];
+    currentKodikSeasons = null;
+    currentKinopoiskId = null;
+    currentPlayerSeasonIdx = 0;
+    currentEpisodeSeasonId = null;
+    playerEpisodesExpanded = false;
+    libriaQualityMap = {};
+    libriaQualityEp = 0;
     clearTimeout(window._playerErrorTimer);
     showSection('watch');
     updateAnimeUrl(currentAnime.malId);
+    showAnimeLoadingScreen(currentAnime.displayTitle);
+    setLoadingProgress('anime', 10);
 
-    await Promise.all([
-        fetchEpisodes(currentAnime),
-        fetchKodikData(currentAnime.malId).then(d => {
+    const hentai = isHentaiAnime(currentAnime);
+    const libriaPromise = hentai ? Promise.resolve({}) : getAnilibriaEpisodeUrls(currentAnime, currentEpisodeNum);
+    const kodikPromise = hentai
+        ? Promise.resolve({ translations: [], episodes: [] })
+        : fetchKodikData(currentAnime.malId).catch(() => ({ translations: [], episodes: [] }));
+
+    if (resume && !hentai) {
+        try {
+            const d = await kodikPromise;
+            if (token !== watchToken) return;
+            currentKodikTranslations = d.translations || [];
+            currentKodikEpisodeNums = d.episodes || [];
+            currentKinopoiskId = d.kinopoiskId || null;
+            syncPlayerSeasonForEpisode(currentEpisodeNum);
+            if (isKodikWatchPlayer()) {
+                applySavedKodikVoice(resume);
+            }
+            // Всегда уточняем серии через with_episodes — episodes_count в поиске бывает пустым
+            if (currentKodikTranslations.length) loadKodikSeasonsMetadata();
+        } catch (_) {}
+    } else if (!resume && !hentai) {
+        kodikPromise.then(d => {
             if (token !== watchToken) return;
             currentKodikTranslations = d.translations;
             currentKodikEpisodeNums = d.episodes;
-        })
-    ]);
+            currentKinopoiskId = d.kinopoiskId || null;
+            syncPlayerSeasonForEpisode(currentEpisodeNum);
+            refreshPlayerPickerInPlace();
+            // Всегда уточняем серии через with_episodes — episodes_count в поиске бывает пустым
+            if (currentKodikTranslations.length) loadKodikSeasonsMetadata();
+        }).catch(() => {});
+    }
+
+    fetchEpisodes(currentAnime).catch(() => {});
+
+    if (!hentai) fetchAnilistId(currentAnime.malId).catch(() => {});
+
+    if (hentai) {
+        setLoadingProgress('anime', 88);
+    } else {
+        const map = await libriaPromise;
+        setLoadingProgress('anime', 72);
+
+        if (token !== watchToken) return;
+        if (Object.keys(map).length) {
+            libriaQualityMap = map;
+            libriaQualityEp = currentEpisodeNum;
+        }
+    }
 
     if (token !== watchToken) return;
+    finishLoadingProgress('anime');
+    stopLoadingProgress('anime');
     renderPlayerUI(currentAnime);
+    saveWatchProgress(currentAnime, currentEpisodeNum);
 
     // Обогащаем русским названием если нужно
     if (currentLang === 'ru') {
-        enrichWithShikimoriTitles([currentAnime]).then(() => {
+        enrichWithRussianTitles([currentAnime]).then(() => {
             if (token !== watchToken) return;
             // Обновляем вкладку браузера
             if (currentAnime.displayTitle) document.title = `${currentAnime.displayTitle} — AnyRainy`;
@@ -2513,18 +4181,17 @@ function renderPlayerUI(anime) {
 
     container.innerHTML = `
         <div class="space-y-4">
-            <!-- Hero — full-bleed, без рамки -->
-            <div class="relative overflow-hidden -mx-4 md:-mx-6" style="min-height:300px">
-                <img src="${anime.image}" alt="${escapeHtml(anime.displayTitle)}"
-                    class="absolute inset-0 w-full h-full object-cover object-center"
-                    style="filter:brightness(0.8)">
-                <!-- Горизонтальный градиент: слева читабельно, справа открыто -->
-                <div class="absolute inset-0" style="background:linear-gradient(to right,rgba(0,0,0,0.88) 0%,rgba(0,0,0,0.55) 50%,rgba(0,0,0,0.15) 100%)"></div>
-                <!-- Нижний фейд в фон страницы (CSS-переменная под тему) -->
-                <div class="absolute inset-x-0 bottom-0 h-40 page-bg-fade"></div>
-                <!-- Контент -->
-                <div class="relative z-10 px-4 md:px-8 pt-10 pb-28 md:pb-36 flex items-end" style="min-height:300px">
-                    <div class="max-w-3xl space-y-4">
+        <div class="watch-page-stack">
+            <div class="watch-hero anim-block">
+                <img src="${proxyImg(anime.image)}" alt="" aria-hidden="true"
+                    class="watch-hero-bg-img">
+                <div class="watch-hero-bg-shade"></div>
+                <div class="watch-hero-inner">
+                    <div class="watch-hero-poster">
+                        <img src="${proxyImg(anime.image)}" alt="${escapeHtml(anime.displayTitle)}"
+                            class="watch-hero-poster-img">
+                    </div>
+                    <div class="watch-hero-body">
                         <div class="flex flex-wrap gap-2">
                             <span class="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-white text-sm font-semibold">${t('rating_badge', anime.rating || 'N/A')}</span>
                             <span class="px-3 py-1 rounded-full bg-white/15 backdrop-blur-md text-white text-sm font-semibold">${t('ep_badge', anime.episodes || '?')}</span>
@@ -2535,9 +4202,14 @@ function renderPlayerUI(anime) {
                                 <i data-lucide="heart" class="w-3.5 h-3.5 ${fav ? 'fill-current' : ''}"></i>
                                 ${fav ? t('in_favorites') : t('to_favorites')}
                             </button>
+                            <button onclick="copyAnimeLink()" title="${t('share_link')}"
+                                class="px-3 py-1 rounded-full backdrop-blur-md text-sm font-semibold flex items-center gap-1.5 transition-colors bg-white/15 text-white hover:bg-white/25">
+                                <i data-lucide="link-2" class="w-3.5 h-3.5"></i>
+                                ${t('share_link')}
+                            </button>
                         </div>
                         <div>
-                            <h2 class="text-3xl md:text-5xl font-bold tracking-tight text-white leading-tight" data-title-id="${anime.id}">${escapeHtml(anime.displayTitle)}</h2>
+                            <h2 class="text-2xl md:text-4xl font-bold tracking-tight text-white leading-tight" data-title-id="${anime.id}">${escapeHtml(anime.displayTitle)}</h2>
                             <p id="anime-synopsis" class="text-white/80 text-sm md:text-base mt-2 md:mt-3 max-w-2xl line-clamp-3 md:line-clamp-4 leading-relaxed">${currentLang === 'ru' && synopsisCache[anime.id] ? synopsisCache[anime.id] : (anime.synopsisEn || anime.synopsis)}</p>
                         </div>
                         <div class="flex flex-wrap gap-2">
@@ -2547,80 +4219,377 @@ function renderPlayerUI(anime) {
                 </div>
             </div>
 
-            <div class="space-y-4">
-                ${(() => {
-                    const player = AUTO_SERVERS[currentServerIndex];
-                    const isKodik = player.type === 'kodik';
-                    const showDropdowns = !player.builtinSelection;
-                    const epNums = currentKodikEpisodeNums.length
-                        ? currentKodikEpisodeNums
-                        : Array.from({ length: anime.episodes || 1 }, (_, i) => i + 1);
-                    const selectCls = 'px-3 py-2 rounded-xl border border-subtle bg-white dark:bg-[#1e1e1e] text-sm font-semibold text-gray-900 dark:text-white outline-none focus:border-airbnb cursor-pointer transition-colors';
-                    // Голос теперь внутри плеера; над плеером оставляем только если Kodik выбран
-                    const voiceHtml = '';
-                    return `
-                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <h2 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">${t('watching')}</h2>
-                    <div id="player-dropdowns" class="flex flex-wrap gap-2 items-center${showDropdowns ? '' : ' hidden'}">
-                        <div id="kodik-voice-wrapper"${!isKodik ? ' class="hidden"' : ''}>
-                            ${voiceHtml}
-                        </div>
-                        <select id="episode-select" onchange="selectEpisode(+this.value)" class="${selectCls}">
-                            ${epNums.map(n =>
-                                `<option value="${n}" ${n === currentEpisodeNum ? 'selected' : ''}>${t('episode_select', n)}</option>`
-                            ).join('')}
-                        </select>
-                    </div>
-                </div>`;
-                })()}
+            ${isHentaiAnime(anime) ? `<p class="text-xs font-semibold text-red-600 dark:text-red-400 px-1">${t('hentai_player_note')}</p>` : ''}
 
-                <div class="w-full aspect-video bg-black rounded-2xl overflow-hidden card-shadow">
-                    <div id="player-viewport" class="w-full h-full">
-                        ${renderCurrentPlayer()}
-                    </div>
+            <div class="watch-player-wrap anim-block">
+                <div class="watch-page-head">
+                    <h3 class="watch-page-title">${escapeHtml(t('watch_page_title', anime.displayTitle))}</h3>
+                    ${buildWatchLayoutSettingHtml()}
                 </div>
-
-                <div class="border-subtle p-3 rounded-2xl bg-white dark:bg-[#1e1e1e] flex flex-wrap gap-2 items-center">
-                    ${AUTO_SERVERS.map((s, i) => `
-                        <button id="srv-btn-${i}" onclick="setServer(${i})"
-                            class="${i === currentServerIndex ? 'px-4 py-2 bg-airbnb text-white' : 'px-4 py-2 bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#333]'} rounded-xl font-bold text-xs transition-colors">
-                            ${escapeHtml(s.name)}
-                        </button>
-                    `).join('')}
-                    <a id="open-in-browser" href="#" target="_blank" rel="noopener"
-                        class="ml-auto px-4 py-2 border border-subtle text-gray-500 dark:text-gray-400 hover:text-airbnb rounded-xl font-bold text-xs transition-colors flex items-center gap-1.5">
-                        <i data-lucide="external-link" class="w-3 h-3"></i>
-                        ${t('open_in_browser')}
-                    </a>
+                <div class="watch-player-block">
+                    <div class="${getWatchLayoutClassList()}">
+                        <div class="watch-player-main">
+                            <div class="watch-player-frame">
+                                <div id="player-viewport" class="absolute inset-0 w-full h-full">
+                                    ${renderCurrentPlayer()}
+                                </div>
+                            </div>
+                        </div>
+                        <aside id="player-sidebar" class="watch-player-sidebar">
+                            ${buildWatchSidebarInner()}
+                        </aside>
+                    </div>
+                    <div id="player-toolbar" class="watch-player-toolbar">
+                        ${buildPlayerToolbarInner()}
+                    </div>
                 </div>
             </div>
+        </div>
 
-            <div id="player-comments-wrapper" class="border-subtle p-6 md:p-8 rounded-[2rem] bg-[#fafafa] dark:bg-[#171717]">
+            <div id="related-anime-section" class="anim-block hidden"></div>
+
+            <div id="player-comments-wrapper" class="anim-block border-subtle p-6 md:p-8 rounded-[2rem] bg-[#fafafa] dark:bg-[#171717]">
                 ${renderCommentsSection(anime)}
             </div>
         </div>
     `;
     lucide.createIcons();
+    staggerAnimBlocks(container);
+    staggerAnimItems(container);
+    bindPlayerPickerEvents();
+    refreshPlayerChrome();
     setupVideoListeners();
-    const _initType = AUTO_SERVERS[currentServerIndex]?.type;
-    if (_initType === 'kodik')  initKodikPlayer();
-    if (_initType === 'libria') initLibriaPlayer();
+    initCurrentPlayerType();
+    loadRelatedAnime(anime.malId);
+}
+
+// ─── Связанные аниме / другие части франшизы (Jikan relations) ────────────────
+const _relatedCache = {};
+let _relatedToken = 0;
+const RELATION_LABELS_RU = {
+    Sequel: 'Продолжение', Prequel: 'Приквел', 'Side story': 'Побочная история',
+    'Alternative version': 'Альт. версия', 'Alternative setting': 'Альт. сеттинг',
+    'Parent story': 'Основная история', 'Full story': 'Полная версия',
+    Summary: 'Сводка', 'Spin-off': 'Спин-офф', Other: 'Прочее', Character: 'Персонаж',
+};
+// Порядок важности: сначала продолжения/приквелы
+const RELATION_ORDER = ['Prequel', 'Sequel', 'Parent story', 'Full story', 'Side story',
+    'Spin-off', 'Alternative version', 'Alternative setting', 'Summary', 'Other', 'Character'];
+
+function relationLabel(rel) {
+    if (currentLang === 'ru') return RELATION_LABELS_RU[rel] || rel;
+    return rel;
+}
+
+async function loadRelatedAnime(malId) {
+    const section = document.getElementById('related-anime-section');
+    if (!section || !malId) return;
+    const token = ++_relatedToken;  // если пользователь ушёл — прекращаем
+    try {
+        let entries = _relatedCache[malId];
+        if (!entries) {
+            const res = await fetch(`https://api.jikan.moe/v4/anime/${malId}/relations`,
+                { signal: AbortSignal.timeout(12000) });
+            const data = await res.json();
+            const seen = new Set();
+            entries = [];
+            (data.data || []).forEach(rel => {
+                (rel.entry || []).forEach(e => {
+                    if (e.type !== 'anime' || e.mal_id === malId || seen.has(e.mal_id)) return;
+                    seen.add(e.mal_id);
+                    entries.push({ malId: e.mal_id, name: e.name, relation: rel.relation });
+                });
+            });
+            entries.sort((a, b) => {
+                const ia = RELATION_ORDER.indexOf(a.relation);
+                const ib = RELATION_ORDER.indexOf(b.relation);
+                return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+            });
+            _relatedCache[malId] = entries;
+        }
+        if (token !== _relatedToken) return;
+        if (!entries.length) { section.classList.add('hidden'); return; }
+        section.innerHTML = buildRelatedSection(entries);
+        section.classList.remove('hidden');
+        lucide.createIcons();
+        loadRelatedPosters(entries, token);
+    } catch (_) {
+        section.classList.add('hidden');
+    }
+}
+
+function buildRelatedSection(entries) {
+    const cards = entries.map(e => `
+        <article class="ongoing-card related-card cursor-pointer group" data-related-id="${e.malId}" onclick="fetchAndWatchByMalId(${e.malId})">
+            <div class="relative aspect-[3/4] overflow-hidden rounded-xl bg-gray-100 dark:bg-gray-800 mb-2.5">
+                <img data-related-poster="${e.malId}" alt="${escapeHtml(e.name)}"
+                     class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy">
+                <span class="related-relation-badge absolute top-2 left-2 px-2 py-1 rounded-lg bg-black/60 backdrop-blur-md text-white text-[11px] font-bold">${escapeHtml(relationLabel(e.relation))}</span>
+            </div>
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white line-clamp-2 leading-snug">${escapeHtml(e.name)}</h3>
+        </article>`).join('');
+
+    return `
+        <div class="flex items-center justify-between gap-3 mb-4">
+            <div class="flex items-center gap-2.5 min-w-0">
+                <span class="flex items-center justify-center w-9 h-9 rounded-xl bg-airbnb/10 text-airbnb shrink-0">
+                    <i data-lucide="layers" class="w-5 h-5"></i>
+                </span>
+                <div class="min-w-0">
+                    <h2 class="text-xl md:text-2xl font-bold text-gray-900 dark:text-white truncate">${t('related_title')}</h2>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 hidden sm:block">${t('related_sub')}</p>
+                </div>
+            </div>
+            ${currentAnime?.malId ? `<button onclick="openFranchiseModal(${currentAnime.malId})"
+                class="franchise-open-btn shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold whitespace-nowrap">
+                <i data-lucide="git-branch" class="w-4 h-4"></i>
+                <span class="hidden sm:inline">${t('franchise_btn')}</span>
+                <span class="sm:hidden">${t('franchise_btn_short')}</span>
+            </button>` : ''}
+        </div>
+        <div class="related-scroll ongoing-scroll flex gap-3 md:gap-4 overflow-x-auto pb-1 -mx-1 px-1">${cards}</div>`;
+}
+
+// Подгружаем постеры по одному (Jikan лимитирует частоту запросов)
+async function loadRelatedPosters(entries, token) {
+    for (const e of entries) {
+        if (token !== _relatedToken) return;
+        if (_relatedPosterCache[e.malId] === undefined) {
+            try {
+                const res = await fetch(`https://api.jikan.moe/v4/anime/${e.malId}`,
+                    { signal: AbortSignal.timeout(10000) });
+                const d = await res.json();
+                _relatedPosterCache[e.malId] = {
+                    img: d.data?.images?.jpg?.large_image_url || d.data?.images?.jpg?.image_url || null,
+                    type: d.data?.type || '',
+                    youtubeId: d.data?.trailer?.youtube_id || null,
+                };
+            } catch (_) { _relatedPosterCache[e.malId] = { img: null, type: '', youtubeId: null }; }
+            await new Promise(r => setTimeout(r, 380));  // throttle под лимит Jikan
+        }
+        if (token !== _relatedToken) return;
+        const meta = _relatedPosterCache[e.malId];
+        const img = document.querySelector(`img[data-related-poster="${e.malId}"]`);
+        if (img && meta.img) img.src = proxyImg(meta.img);
+        // Музыкальный клип/PV → метка и просмотр через YouTube
+        if (meta.type === 'Music' && meta.youtubeId) {
+            const card = document.querySelector(`.related-card[data-related-id="${e.malId}"]`);
+            if (card) markRelatedAsMusic(card, meta.youtubeId, e.name);
+        }
+    }
+}
+const _relatedPosterCache = {};
+
+// Превращаем карточку связанного в «музыкальный клип»: метка + иконка YouTube + клик в модалку
+function markRelatedAsMusic(card, youtubeId, name) {
+    card.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); openYoutubeModal(youtubeId, name); };
+    const badge = card.querySelector('.related-relation-badge');
+    if (badge) { badge.textContent = t('music_video_badge'); badge.classList.add('related-badge-music'); }
+    const wrap = card.querySelector('div.relative');
+    if (wrap && !wrap.querySelector('.related-yt-play')) {
+        const play = document.createElement('div');
+        play.className = 'related-yt-play';
+        play.innerHTML = '<i data-lucide="youtube" class="w-7 h-7"></i>';
+        wrap.appendChild(play);
+        lucide.createIcons();
+    }
+}
+
+// ─── Модалка YouTube (для музыкальных клипов / PV) ─────────────────────────────
+function openYoutubeModal(youtubeId, title) {
+    let modal = document.getElementById('youtube-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'youtube-modal';
+        modal.className = 'yt-modal';
+        document.body.appendChild(modal);
+    }
+    modal.innerHTML = `
+        <div class="yt-modal-backdrop" onclick="closeYoutubeModal()"></div>
+        <div class="yt-modal-inner">
+            <div class="yt-modal-head">
+                <span class="yt-modal-badge"><i data-lucide="youtube" class="w-4 h-4"></i> ${t('music_video_badge')}</span>
+                <span class="yt-modal-title">${escapeHtml(title || '')}</span>
+                <button onclick="closeYoutubeModal()" class="yt-modal-close" aria-label="Закрыть"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="yt-modal-frame">
+                <iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(youtubeId)}?autoplay=1&rel=0"
+                    allow="autoplay; encrypted-media; fullscreen; picture-in-picture" allowfullscreen></iframe>
+            </div>
+        </div>`;
+    requestAnimationFrame(() => modal.classList.add('is-open'));
+    document.body.style.overflow = 'hidden';
+    lucide.createIcons();
+}
+
+function closeYoutubeModal() {
+    const modal = document.getElementById('youtube-modal');
+    if (!modal) return;
+    modal.classList.remove('is-open');
+    modal.innerHTML = '';  // останавливаем видео
+    document.body.style.overflow = '';
+}
+
+// ─── Страница франшизы (хронология частей с датами и описанием) ────────────────
+const _animeDetailCache = {};
+let _franchiseToken = 0;
+
+async function fetchAnimeDetail(malId) {
+    if (_animeDetailCache[malId] !== undefined) return _animeDetailCache[malId];
+    try {
+        const res = await fetch(`https://api.jikan.moe/v4/anime/${malId}`, { signal: AbortSignal.timeout(10000) });
+        const d = (await res.json()).data;
+        _animeDetailCache[malId] = d ? {
+            malId,
+            title: d.title_english || d.title || '',
+            titleRu: d.title,
+            image: d.images?.jpg?.large_image_url || d.images?.jpg?.image_url || null,
+            type: d.type || '',
+            year: d.year || d.aired?.prop?.from?.year || null,
+            airedFrom: d.aired?.from ? new Date(d.aired.from).getTime() : null,
+            airedStr: d.aired?.string || '',
+            synopsis: d.synopsis || '',
+            score: d.score || null,
+            episodes: d.episodes || null,
+            youtubeId: d.trailer?.youtube_id || null,
+        } : null;
+    } catch (_) { _animeDetailCache[malId] = null; }
+    return _animeDetailCache[malId];
+}
+
+function ensureFranchiseModal() {
+    let modal = document.getElementById('franchise-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'franchise-modal';
+        modal.className = 'franchise-modal';
+        document.body.appendChild(modal);
+    }
+    return modal;
+}
+
+async function openFranchiseModal(malId) {
+    const token = ++_franchiseToken;
+    const modal = ensureFranchiseModal();
+    document.body.style.overflow = 'hidden';
+
+    // Каркас со спиннером
+    modal.innerHTML = `
+        <div class="franchise-backdrop" onclick="closeFranchiseModal()"></div>
+        <div class="franchise-panel">
+            <div class="franchise-head">
+                <button onclick="closeFranchiseModal()" class="franchise-back" aria-label="Назад">
+                    <i data-lucide="arrow-left" class="w-5 h-5"></i>
+                </button>
+                <div class="min-w-0">
+                    <h2 class="franchise-title">${t('franchise_title')}</h2>
+                    <p class="franchise-sub" id="franchise-sub">${t('franchise_loading')}</p>
+                </div>
+            </div>
+            <div class="franchise-body" id="franchise-body">
+                <div class="franchise-spinner"><span class="player-play-spinner"></span><span>${t('franchise_loading')}</span></div>
+            </div>
+        </div>`;
+    requestAnimationFrame(() => modal.classList.add('is-open'));
+    lucide.createIcons();
+
+    // Собираем id: текущее аниме + связанные
+    const related = _relatedCache[malId] || [];
+    const ids = [...new Set([Number(malId), ...related.map(e => e.malId)])];
+
+    const details = [];
+    for (const id of ids) {
+        const wasCached = _animeDetailCache[id] !== undefined;
+        const d = await fetchAnimeDetail(id);
+        if (token !== _franchiseToken) return;  // пользователь закрыл/открыл другое
+        if (d) details.push(d);
+        if (!wasCached) await new Promise(r => setTimeout(r, 350));  // троттлинг Jikan
+    }
+
+    // Хронологически по дате выхода
+    details.sort((a, b) => (a.airedFrom || Infinity) - (b.airedFrom || Infinity));
+    renderFranchiseContent(details, malId);
+}
+
+function renderFranchiseContent(details, currentMalId) {
+    const body = document.getElementById('franchise-body');
+    const sub = document.getElementById('franchise-sub');
+    if (!body) return;
+
+    if (!details.length) {
+        body.innerHTML = `<p class="franchise-empty">${t('nothing_found')}</p>`;
+        if (sub) sub.textContent = '';
+        return;
+    }
+    if (sub) sub.textContent = t('franchise_count', details.length);
+
+    body.innerHTML = details.map(d => {
+        const isMusic = d.type === 'Music' && d.youtubeId;
+        const isCurrent = d.malId === Number(currentMalId);
+        const meta = [d.year || '', d.type ? formatAnimeKind(d.type) : '', d.episodes ? t('episodes_count', d.episodes) : '']
+            .filter(Boolean).join(' · ');
+        const action = isMusic
+            ? `<button onclick="openFranchiseYoutube(${d.malId})" class="franchise-watch franchise-watch--yt"><i data-lucide="youtube" class="w-4 h-4"></i> ${t('music_video_badge')}</button>`
+            : `<button onclick="watchFromFranchise(${d.malId})" class="franchise-watch"><i data-lucide="play" class="w-4 h-4 fill-current"></i> ${t('franchise_watch')}</button>`;
+        return `
+        <div class="franchise-item${isCurrent ? ' franchise-item--current' : ''}">
+            <div class="franchise-dot"></div>
+            <div class="franchise-poster">
+                ${d.image ? `<img src="${proxyImg(d.image)}" alt="" loading="lazy">` : ''}
+            </div>
+            <div class="franchise-item-body">
+                <div class="franchise-item-meta">${escapeHtml(meta)}${isCurrent ? ` <span class="franchise-current-tag">${t('franchise_current')}</span>` : ''}</div>
+                <h3 class="franchise-item-title">${escapeHtml(d.titleRu || d.title)}</h3>
+                ${d.airedStr ? `<p class="franchise-item-date"><i data-lucide="calendar" class="w-3.5 h-3.5"></i> ${escapeHtml(d.airedStr)}</p>` : ''}
+                ${d.synopsis ? `<p class="franchise-item-synopsis">${escapeHtml(d.synopsis)}</p>` : ''}
+                ${action}
+            </div>
+        </div>`;
+    }).join('');
+    lucide.createIcons();
+}
+
+function closeFranchiseModal() {
+    _franchiseToken++;  // отменяем незавершённую загрузку
+    const modal = document.getElementById('franchise-modal');
+    if (!modal) return;
+    modal.classList.remove('is-open');
+    setTimeout(() => { if (modal) modal.innerHTML = ''; }, 250);
+    document.body.style.overflow = '';
+}
+
+function watchFromFranchise(malId) {
+    closeFranchiseModal();
+    fetchAndWatchByMalId(malId);
+}
+
+function openFranchiseYoutube(malId) {
+    const d = _animeDetailCache[malId];
+    if (d?.youtubeId) openYoutubeModal(d.youtubeId, d.titleRu || d.title);
 }
 
 // ─── Player helpers ───────────────────────────────────────────────────────────
 
 function renderCurrentPlayer() {
-    const player = AUTO_SERVERS[currentServerIndex] || AUTO_SERVERS[0];
-    if (player.type === 'kodik') {
-        return buildKodikDirectPlayerShell();
+    const player = getActiveServers()[currentServerIndex] || getActiveServers()[0];
+    if (player.type === 'kodik') return buildKodikDirectPlayerShell();
+    if (player.type === 'libria') return buildLibriaPlayerShell();
+    if (player.type === 'iframe') {
+        if (player.resolveUrl) return buildIframeLoadingShell();
+        if (player.url) return buildIframePlayerShell(player.url(currentAnime.malId, currentEpisodeNum));
     }
-    if (player.type === 'libria') {
-        return buildLibriaPlayerShell();
-    }
-    return buildIframe(player.url(currentAnime.malId, currentEpisodeNum));
+    return buildIframePlayerShell('');
+}
+
+async function resolveIframeSrc(player, malId, ep) {
+    if (!player) return '';
+    if (player.resolveUrl) return player.resolveUrl(malId, ep);
+    if (player.url) return player.url(malId, ep);
+    return '';
 }
 
 function showKodikError(noTranslation = false) {
+    stopLoadingProgress('kodik');
     const loadingEl = document.getElementById('kodik-loading');
     const fallbackEl = document.getElementById('kodik-fallback-msg');
     if (loadingEl) loadingEl.classList.add('hidden');
@@ -2638,62 +4607,96 @@ function showKodikError(noTranslation = false) {
 
 // ─── Kodik direct player (480p, без рекламы) ─────────────────────────────────
 
+function buildSeekTrackHtml(prefix) {
+    return `
+            <div id="${prefix}-seek-track" class="group/seek py-2 cursor-pointer">
+                <div class="player-seek-rail w-full h-1 group-hover/seek:h-[5px] bg-white/15 rounded-full relative overflow-visible transition-all duration-150">
+                    <div id="${prefix}-buf-bar" class="player-seek-buf absolute left-0 top-0 h-full rounded-full"></div>
+                    <div id="${prefix}-load-bar" class="player-seek-load absolute top-0 h-full rounded-full"></div>
+                    <div id="${prefix}-prog-bar" class="player-seek-prog absolute left-0 top-0 h-full bg-airbnb rounded-full"></div>
+                    <div id="${prefix}-seek-thumb" class="player-seek-thumb absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 rounded-full bg-white shadow-lg opacity-0 group-hover/seek:opacity-100 transition-opacity pointer-events-none" style="left:0%"></div>
+                </div>
+            </div>`;
+}
+
 function buildKodikDirectPlayerShell() {
     return `
-    <div id="kodik-direct-player" class="w-full h-full bg-black relative overflow-hidden" tabindex="0">
+    <div id="kodik-direct-player" class="w-full h-full bg-black relative overflow-hidden"
+         tabindex="0" onmousemove="showPlayerControls('kodik')" onmouseleave="scheduleHideControls('kodik')">
+
+        ${buildPlayerPickerHtml()}
+
         <!-- Загрузка -->
-        <div id="kodik-loading" class="absolute inset-0 flex items-center justify-center bg-black z-20">
-            <div class="flex flex-col items-center gap-3">
-                <div class="w-10 h-10 border-4 border-airbnb border-t-transparent rounded-full animate-spin"></div>
-                <p class="text-white/70 text-sm font-medium">${t('player_loading')}</p>
+        <div id="kodik-loading" class="absolute inset-0 flex items-center justify-center bg-black z-20 pointer-events-none">
+            ${buildLoadingOverlayContent('kodik', true)}
+        </div>
+
+        <!-- Видео -->
+        <video id="kodik-video" class="w-full h-full hidden cursor-pointer" playsinline preload="metadata"></video>
+        <canvas id="kodik-canvas" class="hidden absolute inset-0 w-full h-full cursor-pointer"></canvas>
+
+        <!-- Начать просмотр -->
+        <div id="kodik-start-overlay" class="player-start-overlay hidden">
+            <button type="button" onclick="startPlayerPlayback('kodik')" class="player-start-btn">
+                <i data-lucide="play" class="w-8 h-8 fill-current"></i>
+            </button>
+            <p class="player-start-label">${t('start_watch')}</p>
+            <p id="kodik-start-time" class="player-start-time">0:00</p>
+        </div>
+
+        <!-- Панель качества -->
+        <div id="kodik-quality-panel" class="hidden absolute z-50" style="bottom:58px;right:12px;">
+            <div class="player-quality-popup player-quality-scroll bg-[#111]/95 backdrop-blur-md border border-white/10 shadow-2xl">
+                <div class="player-quality-popup-head">
+                    <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5 text-airbnb"></i>
+                    ${escapeHtml(t('quality_panel'))}
+                </div>
+                <div id="kodik-quality-list" class="py-1"></div>
             </div>
         </div>
-        <!-- Видео (без нативных контролов) -->
-        <video id="kodik-video" class="w-full h-full hidden cursor-pointer" playsinline autoplay></video>
-        <!-- Кастомные контролы -->
-        <div id="kodik-controls" class="hidden absolute bottom-0 left-0 right-0 z-30"
-            style="background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,transparent 100%);padding:10px 12px 8px;">
-            <input type="range" id="kodik-seek" min="0" max="100" step="0.1" value="0"
-                class="w-full mb-2 cursor-pointer outline-none"
-                style="height:4px;accent-color:#FF5A5F;border-radius:2px;">
-            <div class="flex items-center gap-3">
-                <button id="kodik-play-btn" onclick="toggleKodikPlay()" class="text-white hover:text-airbnb transition-colors">
-                    <i data-lucide="pause" class="w-5 h-5"></i>
+        ${buildFitPanel('kodik')}
+
+        <!-- Контролы -->
+        <div id="kodik-controls" class="hidden absolute bottom-0 left-0 right-0 z-30 transition-opacity duration-300"
+             style="background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.5) 55%,transparent 100%);padding:0 14px 14px;">
+            <!-- Seek track -->
+            ${buildSeekTrackHtml('kodik')}
+            <!-- Кнопки -->
+            <div class="flex items-center gap-2 flex-wrap">
+                <button id="kodik-play-btn" onclick="toggleKodikPlay()" class="player-play-btn text-white hover:text-airbnb transition-colors p-1">
+                    <i data-lucide="play" class="w-5 h-5"></i>
                 </button>
-                <span id="kodik-time" class="text-white/80 text-xs font-mono tabular-nums">0:00 / 0:00</span>
-                ${currentKodikTranslations.length > 1 ? `
-                <select id="kodik-voice-inplayer" onchange="selectVoice(+this.value)"
-                    class="bg-black/60 text-white text-xs rounded-md px-1.5 py-0.5 outline-none cursor-pointer border border-white/20 max-w-[130px] truncate">
-                    ${currentKodikTranslations.map((tr, i) =>
-                        `<option value="${i}" ${i === currentKodikTranslationIdx ? 'selected' : ''} class="bg-black text-white">${escapeHtml(tr.title)}</option>`
-                    ).join('')}
-                </select>` : currentKodikTranslations.length === 1 ? `
-                <span class="text-white/60 text-xs truncate max-w-[100px]">${escapeHtml(currentKodikTranslations[0].title)}</span>` : ''}
-                <div class="flex items-center gap-2 ml-auto">
-                    <button id="kodik-vol-btn" onclick="toggleKodikMute()" class="text-white hover:text-airbnb transition-colors">
+                <span id="kodik-time" class="text-white/70 text-xs font-mono tabular-nums select-none">0:00 / 0:00</span>
+                <div class="flex items-center gap-1.5 ml-auto">
+                    <button id="kodik-vol-btn" onclick="toggleKodikMute()" class="text-white/80 hover:text-white transition-colors p-1">
                         <i data-lucide="volume-2" class="w-4 h-4"></i>
                     </button>
                     <input type="range" id="kodik-vol-slider" min="0" max="1" step="0.02" value="1"
                         oninput="setKodikVolume(this.value)"
-                        class="w-14 cursor-pointer outline-none"
-                        style="height:3px;accent-color:#FF5A5F;border-radius:2px;">
-                    <select onchange="setKodikSpeed(this.value)"
-                        class="bg-transparent text-white/80 text-xs outline-none cursor-pointer hover:text-white transition-colors appearance-none">
-                        <option value="0.5" class="bg-black text-white">0.5×</option>
-                        <option value="0.75" class="bg-black text-white">0.75×</option>
-                        <option value="1" selected class="bg-black text-white">1×</option>
-                        <option value="1.25" class="bg-black text-white">1.25×</option>
-                        <option value="1.5" class="bg-black text-white">1.5×</option>
-                        <option value="2" class="bg-black text-white">2×</option>
+                        class="player-range w-14 cursor-pointer">
+                    <select onchange="setKodikSpeed(this.value)" class="player-select bg-transparent text-white/70 text-xs outline-none cursor-pointer hover:text-white transition-colors appearance-none px-1">
+                        <option value="0.5"  class="bg-[#111]">0.5×</option>
+                        <option value="0.75" class="bg-[#111]">0.75×</option>
+                        <option value="1"    class="bg-[#111]" selected>1×</option>
+                        <option value="1.25" class="bg-[#111]">1.25×</option>
+                        <option value="1.5"  class="bg-[#111]">1.5×</option>
+                        <option value="2"    class="bg-[#111]">2×</option>
                     </select>
-                    <button onclick="toggleKodikFullscreen()" class="text-white hover:text-airbnb transition-colors">
+                    <!-- Quality button -->
+                    <button onclick="toggleQualityPanel('kodik')" id="kodik-quality-btn"
+                        class="text-white/80 hover:text-white text-[11px] font-bold px-2 py-0.5 rounded-lg border border-white/20 hover:border-airbnb hover:text-airbnb transition-colors whitespace-nowrap">
+                        <span id="kodik-quality-label">HD</span>
+                    </button>
+                    ${buildFitBtn('kodik')}
+                    <button onclick="toggleKodikFullscreen()" class="text-white/80 hover:text-white transition-colors p-1">
                         <i data-lucide="maximize" class="w-4 h-4"></i>
                     </button>
                 </div>
             </div>
         </div>
+
         <!-- Ошибка / fallback -->
-        <div id="kodik-fallback-msg" class="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[#0e0e0e] text-white text-center px-6 z-30">
+        <div id="kodik-fallback-msg" class="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[#0a0a0a] text-white text-center px-6 z-30">
             <i data-lucide="wifi-off" class="w-10 h-10 text-gray-500"></i>
             <p class="font-semibold kodik-err-title">${t('player_error_title')}</p>
             <p class="text-sm text-gray-400 kodik-err-sub">${t('player_error_sub')}</p>
@@ -2708,49 +4711,79 @@ function buildKodikDirectPlayerShell() {
 
 function buildLibriaPlayerShell() {
     return `
-    <div id="libria-player" class="w-full h-full bg-black relative overflow-hidden" tabindex="0">
-        <div id="libria-loading" class="absolute inset-0 flex items-center justify-center bg-black z-20">
-            <div class="flex flex-col items-center gap-3">
-                <div class="w-10 h-10 border-4 border-airbnb border-t-transparent rounded-full animate-spin"></div>
-                <p class="text-white/70 text-sm font-medium">${t('player_loading')}</p>
-            </div>
+    <div id="libria-player" class="w-full h-full bg-black relative overflow-hidden"
+         tabindex="0" onmousemove="showPlayerControls('libria')" onmouseleave="scheduleHideControls('libria')">
+
+        ${buildPlayerPickerHtml()}
+
+        <div id="libria-loading" class="absolute inset-0 flex items-center justify-center bg-black z-20 pointer-events-none">
+            ${buildLoadingOverlayContent('libria', true)}
         </div>
+
         <video id="libria-video" playsinline crossorigin="anonymous"
             style="position:absolute;width:1px;height:1px;top:0;left:0;opacity:0;pointer-events:none;"></video>
         <canvas id="libria-canvas" class="w-full h-full hidden cursor-pointer"></canvas>
-        <div id="libria-controls" class="hidden absolute bottom-0 left-0 right-0 z-30"
-            style="background:linear-gradient(to top,rgba(0,0,0,0.85) 0%,transparent 100%);padding:10px 12px 8px;">
-            <input type="range" id="libria-seek" min="0" max="100" step="0.1" value="0"
-                class="w-full mb-2 cursor-pointer outline-none" style="height:4px;accent-color:#FF5A5F;border-radius:2px;">
-            <div class="flex items-center gap-3">
-                <button id="libria-play-btn" onclick="toggleLibriaPlay()" class="text-white hover:text-airbnb transition-colors">
-                    <i data-lucide="pause" class="w-5 h-5"></i>
+
+        <!-- Начать просмотр -->
+        <div id="libria-start-overlay" class="player-start-overlay hidden">
+            <button type="button" onclick="startPlayerPlayback('libria')" class="player-start-btn">
+                <i data-lucide="play" class="w-8 h-8 fill-current"></i>
+            </button>
+            <p class="player-start-label">${t('start_watch')}</p>
+            <p id="libria-start-time" class="player-start-time">0:00</p>
+        </div>
+
+        <!-- Панель качества (4K) -->
+        <div id="libria-quality-panel" class="hidden absolute z-50" style="bottom:58px;right:12px;">
+            <div class="player-quality-popup player-quality-scroll bg-[#111]/95 backdrop-blur-md border border-white/10 shadow-2xl">
+                <div class="player-quality-popup-head">
+                    <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5 text-airbnb"></i>
+                    ${escapeHtml(t('quality_panel'))}
+                </div>
+                <div id="libria-quality-list" class="py-1"></div>
+            </div>
+        </div>
+        ${buildFitPanel('libria')}
+
+        <!-- Контролы -->
+        <div id="libria-controls" class="hidden absolute bottom-0 left-0 right-0 z-30 transition-opacity duration-300"
+             style="background:linear-gradient(to top,rgba(0,0,0,0.92) 0%,rgba(0,0,0,0.5) 55%,transparent 100%);padding:0 14px 14px;">
+            ${buildSeekTrackHtml('libria')}
+            <!-- Кнопки -->
+            <div class="flex items-center gap-2 flex-wrap">
+                <button id="libria-play-btn" onclick="toggleLibriaPlay()" class="player-play-btn text-white hover:text-airbnb transition-colors p-1">
+                    <i data-lucide="play" class="w-5 h-5"></i>
                 </button>
-                <span id="libria-time" class="text-white/80 text-xs font-mono tabular-nums">0:00 / 0:00</span>
-                <div class="flex items-center gap-2 ml-auto">
-                    <button id="libria-vol-btn" onclick="toggleLibriaMute()" class="text-white hover:text-airbnb transition-colors">
+                <span id="libria-time" class="text-white/70 text-xs font-mono tabular-nums select-none">0:00 / 0:00</span>
+                <div class="flex items-center gap-1.5 ml-auto">
+                    <button id="libria-vol-btn" onclick="toggleLibriaMute()" class="text-white/80 hover:text-white transition-colors p-1">
                         <i data-lucide="volume-2" class="w-4 h-4"></i>
                     </button>
                     <input type="range" id="libria-vol-slider" min="0" max="1" step="0.02" value="1"
                         oninput="setLibriaVolume(this.value)"
-                        class="w-14 cursor-pointer outline-none"
-                        style="height:3px;accent-color:#FF5A5F;border-radius:2px;">
-                    <select onchange="setLibriaSpeed(this.value)"
-                        class="bg-transparent text-white/80 text-xs outline-none cursor-pointer hover:text-white transition-colors appearance-none">
-                        <option value="0.5" class="bg-black text-white">0.5×</option>
-                        <option value="0.75" class="bg-black text-white">0.75×</option>
-                        <option value="1" selected class="bg-black text-white">1×</option>
-                        <option value="1.25" class="bg-black text-white">1.25×</option>
-                        <option value="1.5" class="bg-black text-white">1.5×</option>
-                        <option value="2" class="bg-black text-white">2×</option>
+                        class="player-range w-14 cursor-pointer">
+                    <select onchange="setLibriaSpeed(this.value)" class="player-select bg-transparent text-white/70 text-xs outline-none cursor-pointer hover:text-white transition-colors appearance-none px-1">
+                        <option value="0.5"  class="bg-[#111]">0.5×</option>
+                        <option value="0.75" class="bg-[#111]">0.75×</option>
+                        <option value="1"    class="bg-[#111]" selected>1×</option>
+                        <option value="1.25" class="bg-[#111]">1.25×</option>
+                        <option value="1.5"  class="bg-[#111]">1.5×</option>
+                        <option value="2"    class="bg-[#111]">2×</option>
                     </select>
-                    <button onclick="toggleLibriaFullscreen()" class="text-white hover:text-airbnb transition-colors">
+                    <!-- Quality button -->
+                    <button onclick="toggleQualityPanel('libria')" id="libria-quality-btn"
+                        class="text-white/80 hover:text-white text-[11px] font-bold px-2 py-0.5 rounded-lg border border-white/20 hover:border-airbnb hover:text-airbnb transition-colors whitespace-nowrap">
+                        <span id="libria-quality-label">1080p</span>
+                    </button>
+                    ${buildFitBtn('libria')}
+                    <button onclick="toggleLibriaFullscreen()" class="text-white/80 hover:text-white transition-colors p-1">
                         <i data-lucide="maximize" class="w-4 h-4"></i>
                     </button>
                 </div>
             </div>
         </div>
-        <div id="libria-error" class="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[#0e0e0e] text-white text-center px-6 z-40">
+
+        <div id="libria-error" class="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[#0a0a0a] text-white text-center px-6 z-40">
             <i data-lucide="frown" class="w-10 h-10 text-gray-500"></i>
             <p class="font-semibold">${t('libria_not_found')}</p>
             <p class="text-sm text-gray-400">${t('libria_try_other')}</p>
@@ -2792,17 +4825,95 @@ function decodeKodikUrl(encoded) {
 const kodikEmbedHtmlCache = {};
 const kodikEmbedParamsCache = {};
 
-// Извлечь видео URL из ответа ftor/kor/gvi
-function _extractKodikUrl(data) {
-    for (const q of ['480','480p','360','360p','720','720p','1080','1080p']) {
+// Извлечь все доступные качества из ответа Kodik
+function _extractAllKodikUrls(data) {
+    const map = {};
+    for (const q of ['1080p','1080','720p','720','480p','480','360p','360']) {
         const src = data.links?.[q]?.[0]?.src;
-        if (src) { const u = decodeKodikUrl(src); if (u) return u; }
+        if (src) {
+            const u = decodeKodikUrl(src);
+            if (u) {
+                const label = q.replace(/(\d+)p?$/, '$1p'); // нормализуем к "1080p"
+                if (!map[label]) map[label] = u;
+            }
+        }
+    }
+    // Kodik физически не отдаёт выше 720p — добавляем WebGL-апскейл как '1080p ✦'
+    if (map['720p'] && !map['1080p']) map['1080p ✦'] = map['720p'];
+    return map;
+}
+
+// Извлечь лучший URL (обратная совместимость) + сохранить карту качеств
+function _extractKodikUrl(data) {
+    const map = _extractAllKodikUrls(data);
+    if (Object.keys(map).length) kodikQualityMap = map;
+    for (const q of ['1080p','720p','480p','360p']) {
+        if (map[q]) return map[q];
     }
     if (data.src) { const u = decodeKodikUrl(data.src); if (u) return u; }
     return null;
 }
 
-// Загрузить HTML embed-страницы (прямой фетч или через прокси)
+// HLS — баланс скорости и стабильности
+const HLS_FAST_OPTS = {
+    maxBufferLength: 30, maxMaxBufferLength: 60, startLevel: -1, enableWorker: true,
+    startFragPrefetch: true,   // тянем первый сегмент заранее → быстрее первый кадр
+    testBandwidth: false,      // не тратим время на тест скорости перед стартом
+};
+
+// Попытаться запустить воспроизведение сразу; если браузер заблокировал автоплей —
+// показать кнопку «Начать просмотр». Это убирает лишнее ожидание + ручной клик.
+function autoplayOrPrompt(prefix) {
+    const videoEl = getPlayerVideo(prefix);
+    if (!videoEl) return;
+    const p = videoEl.play();
+    if (p && typeof p.then === 'function') {
+        p.then(() => {
+            playerPlaybackStarted[prefix] = true;
+            hideStartWatchOverlay(prefix);
+            showPlayerControls(prefix);
+            syncPlayerPlayBtn(prefix);
+        }).catch(() => {
+            videoEl.pause();
+            showStartWatchOverlay(prefix);
+            syncPlayerPlayBtn(prefix);
+        });
+    } else {
+        showStartWatchOverlay(prefix);
+    }
+}
+
+async function resolveKodikEpLink(malId, translation, ep) {
+    return fetchKodikEpisodeLink(malId, translation.id, ep, currentEpisodeSeasonId);
+}
+
+function needsKodikProxy() {
+    const h = location.hostname;
+    return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || location.protocol === 'file:';
+}
+
+async function _tryKodikProxy(body, endpoint = 'ftor') {
+    try {
+        const res = await fetch(`/kodik-proxy?endpoint=${encodeURIComponent(endpoint)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body,
+            signal: AbortSignal.timeout(6000),
+        });
+        if (res.ok) {
+            const t = await res.text();
+            if (t.startsWith('{')) return _extractKodikUrl(JSON.parse(t));
+        }
+    } catch (_) {}
+    return null;
+}
+
+async function _firstKodikPost(endpoints, body, referer) {
+    const urls = await Promise.all(endpoints.map(ep => _postKodik(ep, body, referer)));
+    return urls.find(Boolean) || null;
+}
+
+// Загрузить HTML embed-страницы (параллельно — берём первый успешный)
 async function fetchKodikEmbedHtml(embedUrl) {
     if (kodikEmbedHtmlCache[embedUrl]) return kodikEmbedHtmlCache[embedUrl];
     const attempts = [
@@ -2811,29 +4922,29 @@ async function fetchKodikEmbedHtml(embedUrl) {
             return r.ok ? r.text() : null;
         },
         async () => {
-            const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(embedUrl), { signal: AbortSignal.timeout(9000) });
+            const r = await fetch('https://api.allorigins.win/get?url=' + encodeURIComponent(embedUrl), { signal: AbortSignal.timeout(7000) });
             if (!r.ok) return null;
             const j = await r.json(); return j.contents || null;
         },
         async () => {
-            const r = await fetch('https://corsproxy.io/?url=' + encodeURIComponent(embedUrl), { signal: AbortSignal.timeout(9000) });
+            const r = await fetch('https://corsproxy.io/?url=' + encodeURIComponent(embedUrl), { signal: AbortSignal.timeout(7000) });
             return r.ok ? r.text() : null;
         },
         async () => {
-            const r = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(embedUrl), { signal: AbortSignal.timeout(9000) });
+            const r = await fetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(embedUrl), { signal: AbortSignal.timeout(7000) });
             return r.ok ? r.text() : null;
         },
     ];
-    for (const fn of attempts) {
-        try {
-            const html = await fn();
-            if (html && html.length > 200) {
-                kodikEmbedHtmlCache[embedUrl] = html;
-                return html;
-            }
-        } catch (_) {}
+    try {
+        const html = await Promise.any(attempts.map(fn => fn().then(h => {
+            if (h && h.length > 200) return h;
+            throw new Error('empty');
+        })));
+        kodikEmbedHtmlCache[embedUrl] = html;
+        return html;
+    } catch (_) {
+        return null;
     }
-    return null;
 }
 
 // Метод А (новый, kodikwrapper): извлечь POST endpoint из atob() в JS плеера
@@ -2860,6 +4971,10 @@ function extractKodikUrlParams(html) {
 
 // Вспомогательная функция для POST к Kodik endpoint
 async function _postKodik(endpoint, body, referer) {
+    if (needsKodikProxy()) {
+        const ep = String(endpoint).includes('/kor') ? 'kor' : 'ftor';
+        return _tryKodikProxy(body, ep);
+    }
     try {
         const res = await fetch(endpoint, {
             method: 'POST',
@@ -2881,6 +4996,7 @@ async function _postKodik(endpoint, body, referer) {
 async function getKodikDirectUrl(link) {
     const ep = parseKodikLink(link);
     if (!ep) return null;
+    kodikQualityMap = {}; // сбрасываем перед новым запросом
     const embedUrl = link.startsWith('//') ? 'https:' + link : link;
 
     // ── Метод 1: Слепой POST к известным endpoint'ам без HTML ──────────────────
@@ -2889,23 +5005,25 @@ async function getKodikDirectUrl(link) {
         hash: ep.hash, id: ep.id, type: ep.type,
         bad_user: 'true', cdn_is_working: 'true',
     });
-    for (const endpoint of ['https://kodikplayer.com/ftor', 'https://kodikplayer.com/kor', 'https://kodik.info/ftor']) {
-        const u = await _postKodik(endpoint, simpleBody, embedUrl);
-        if (u) return u;
+
+    // localhost: только через server.js (прямые запросы блокирует CORS)
+    if (needsKodikProxy()) {
+        const [ftorUrl, korUrl] = await Promise.all([
+            _tryKodikProxy(simpleBody, 'ftor'),
+            _tryKodikProxy(simpleBody, 'kor'),
+        ]);
+        if (ftorUrl || korUrl) return ftorUrl || korUrl;
+    } else {
+        const directUrl = await _firstKodikPost(
+            ['https://kodikplayer.com/ftor', 'https://kodikplayer.com/kor', 'https://kodik.info/ftor'],
+            simpleBody, embedUrl
+        );
+        if (directUrl) return directUrl;
+        const proxyUrl = await _tryKodikProxy(simpleBody, 'ftor');
+        if (proxyUrl) return proxyUrl;
     }
 
-    // ── Метод 2: Через локальный прокси server.js ──────────────────────────────
-    try {
-        const res = await fetch('/kodik-proxy', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: simpleBody,
-            signal: AbortSignal.timeout(6000),
-        });
-        if (res.ok) { const t = await res.text(); if (t.startsWith('{')) { const u = _extractKodikUrl(JSON.parse(t)); if (u) return u; } }
-    } catch (_) {}
-
-    // ── Методы 3+4: Получаем HTML embed-страницы через прокси ─────────────────
+    // ── Методы 3+4: HTML embed-страницы ─────────────────
     const html = await fetchKodikEmbedHtml(embedUrl);
     if (!html) return null;
 
@@ -2933,23 +5051,17 @@ async function getKodikDirectUrl(link) {
             const u = await _postKodik(endpoint, signedBody, embedUrl);
             if (u) return u;
         }
-        // Через локальный прокси с подписанными параметрами
-        try {
-            const res = await fetch('/kodik-proxy', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: signedBody,
-                signal: AbortSignal.timeout(6000),
-            });
-            if (res.ok) { const t = await res.text(); if (t.startsWith('{')) { const u = _extractKodikUrl(JSON.parse(t)); if (u) return u; } }
-        } catch (_) {}
+        if (!needsKodikProxy()) {
+            const signedProxy = await _tryKodikProxy(signedBody, 'ftor');
+            if (signedProxy) return signedProxy;
+        }
     }
 
     return null;
 }
 
 function buildKodikFindPlayerUrl(malId, ep, translationId) {
-    let url = `https://kodik.info/find-player?token=${KODIK_TOKEN}&shikimori_id=${malId}&with_episodes=true&episode=${ep}`;
+    let url = kodikFindPlayerUrl(malId, ep);
     if (translationId) url += `&translation_id=${translationId}`;
     return url;
 }
@@ -2961,22 +5073,28 @@ function toKodik480p(link) {
 
 async function initKodikPlayer() {
     const token = ++kodikPlayerToken;
-    const player = AUTO_SERVERS[currentServerIndex];
+    const player = getActiveServers()[currentServerIndex];
     if (!player || player.type !== 'kodik') return;
 
+    startLoadingProgress('kodik');
+
+    ensureKodikTranslationForPlayer();
+
     if (!currentKodikTranslations.length) {
+        stopLoadingProgress('kodik');
         showKodikError(true);
         return;
     }
 
     const translation = currentKodikTranslations[currentKodikTranslationIdx];
 
-    const epLink = await fetchKodikEpisodeLink(currentAnime.malId, translation.id, currentEpisodeNum);
+    const epLink = await resolveKodikEpLink(currentAnime.malId, translation, currentEpisodeNum);
 
     if (token !== kodikPlayerToken) return;
     if (!document.getElementById('kodik-loading')) return;
 
     if (!epLink) {
+        stopLoadingProgress('kodik');
         showKodikError();
         return;
     }
@@ -2989,20 +5107,28 @@ async function initKodikPlayer() {
     if (directUrl) {
         loadKodikVideo(directUrl);
     } else {
-        // Прямой URL недоступен → iframe 480p (без рекламы на 480p)
-        showKodikIframe(toKodik480p(epLink));
+        // Прямой URL недоступен — показываем ошибку, кастомный плеер остаётся
+        stopLoadingProgress('kodik');
+        showKodikError();
     }
 }
 
 function showKodikIframe(url) {
+    stopLoadingProgress('kodik');
     const viewport = document.getElementById('player-viewport');
     if (!viewport) return;
     if (document.getElementById('kodik-loading')) {
-        viewport.innerHTML = buildIframe(url);
+        viewport.innerHTML = buildIframePlayerShell(url);
+        lucide.createIcons();
+        bindPlayerPickerEvents();
+        initIframePlayer();
     } else {
         const iframe = document.getElementById('anime-iframe');
         if (iframe) { iframe.src = url; return; }
-        viewport.innerHTML = buildIframe(url);
+        viewport.innerHTML = buildIframePlayerShell(url);
+        lucide.createIcons();
+        bindPlayerPickerEvents();
+        initIframePlayer();
     }
     lucide.createIcons();
 }
@@ -3011,12 +5137,20 @@ function loadKodikVideo(url) {
     const loadingEl = document.getElementById('kodik-loading');
     const videoEl   = document.getElementById('kodik-video');
     const ctrlEl    = document.getElementById('kodik-controls');
-    const playerEl  = document.getElementById('kodik-direct-player');
     if (!videoEl) return;
 
+    playerPlaybackStarted.kodik = false;
+    _pendingSeekPct.kodik = null;
+    playerBufferState.kodik = { buffering: false, loadingFrag: false, speedBps: 0 };
+
+    finishLoadingProgress('kodik');
+    stopLoadingProgress('kodik');
     if (loadingEl) loadingEl.classList.add('hidden');
     videoEl.classList.remove('hidden');
-    if (ctrlEl) ctrlEl.classList.remove('hidden');
+    videoEl.style.width = '100%';
+    videoEl.style.height = '100%';
+    applyPlayerFitMode();
+    if (ctrlEl) { ctrlEl.classList.remove('hidden'); ctrlEl.style.opacity = '1'; }
 
     if (kodikHls) { kodikHls.destroy(); kodikHls = null; }
 
@@ -3024,43 +5158,79 @@ function loadKodikVideo(url) {
 
     const onFatal = () => {
         kodikHls?.destroy(); kodikHls = null;
-        const tr = currentKodikTranslations[currentKodikTranslationIdx];
-        const fb = tr?.link ? toKodik480p(tr.link) : null;
-        if (fb) showKodikIframe(fb); else showKodikError();
+        showKodikError();
+    };
+
+    const onReady = () => {
+        updateKodikTime();
+        updateSeekVisual('kodik', videoEl);
+        applyResumePosition('kodik');
+        autoplayOrPrompt('kodik');
     };
 
     if (isM3u8 && Hls.isSupported()) {
-        kodikHls = new Hls({ maxBufferLength: 30, startLevel: 0 });
+        kodikHls = new Hls({ ...HLS_FAST_OPTS, abrBandWidthFactor: 0.95, abrBandWidthUpFactor: 0.9 });
         kodikHls.loadSource(url);
         kodikHls.attachMedia(videoEl);
-        kodikHls.once(Hls.Events.MANIFEST_PARSED, () => videoEl.play().catch(() => {}));
+        kodikHls.once(Hls.Events.MANIFEST_PARSED, onReady);
         kodikHls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) onFatal(); });
+        bindHlsBufferEvents(kodikHls, 'kodik', videoEl);
     } else if (videoEl.canPlayType('application/vnd.apple.mpegurl') && isM3u8) {
-        videoEl.src = url; videoEl.load(); videoEl.play().catch(() => {});
+        videoEl.src = url;
+        videoEl.load();
+        videoEl.addEventListener('loadedmetadata', onReady, { once: true });
     } else {
-        videoEl.src = url; videoEl.load(); videoEl.play().catch(() => {});
+        videoEl.src = url;
+        videoEl.load();
+        videoEl.addEventListener('loadedmetadata', onReady, { once: true });
     }
 
-    // Кастомные контролы
     videoEl.addEventListener('timeupdate', updateKodikTime);
-    videoEl.addEventListener('play',  () => updateKodikPlayBtn(false));
-    videoEl.addEventListener('pause', () => updateKodikPlayBtn(true));
+    videoEl.addEventListener('play',  () => { updateKodikPlayBtn(false); showPlayerControls('kodik'); });
+    videoEl.addEventListener('pause', () => { updateKodikPlayBtn(true);  showPlayerControls('kodik'); });
+    videoEl.addEventListener('loadedmetadata', () => {
+        if (_pendingSeekPct.kodik != null) {
+            seekVideoTo('kodik', videoEl, _pendingSeekPct.kodik * videoEl.duration);
+            _pendingSeekPct.kodik = null;
+        }
+        updateKodikTime();
+    });
+    videoEl.addEventListener('seeked', () => updateKodikTime());
 
-    const seekEl = document.getElementById('kodik-seek');
-    if (seekEl) {
-        seekEl.addEventListener('input', () => {
-            if (videoEl.duration) videoEl.currentTime = (seekEl.value / 100) * videoEl.duration;
-        });
+    bindVideoBufferEvents(videoEl, 'kodik');
+    initSeekDrag('kodik-seek-track', videoEl, 'kodik');
+
+    // Инициализируем панель качества
+    renderQualityPanel('kodik');
+    refreshPlayerPickerInPlace();
+    const pendingQ = window._pendingKodikQuality;
+    window._pendingKodikQuality = null;
+    if (pendingQ && kodikQualityMap[pendingQ]) {
+        kodikCurrentQuality = pendingQ;
+        updateQualityLabel('kodik', pendingQ);
+        setKodikQuality(pendingQ);
+    } else {
+        const bestQ = sortQualityKeys(Object.keys(kodikQualityMap)).find(q => q !== '1080p ✦') || '';
+        if (bestQ) { kodikCurrentQuality = bestQ; updateQualityLabel('kodik', bestQ); }
+        else { document.getElementById('kodik-quality-btn')?.classList.add('hidden'); }
     }
+    kodikUpscaleHD = (kodikCurrentQuality === '1080p ✦');
+    applyKodikUpscale();
 
-    // Клик мышью → play/pause
+    // Запускаем таймер автоскрытия
+    showPlayerControls('kodik');
+
+    // Клик мышью → play/pause или старт
     videoEl.addEventListener('click', (e) => {
         if (e.pointerType === 'touch') return;
+        if (_seekDragging.kodik) return;
+        if (!playerPlaybackStarted.kodik) { showStartWatchOverlay('kodik'); return; }
         toggleKodikPlay();
     });
 
     // Двойное касание мобайл: лево −10с, право +10с
     let _tCount = 0, _tSide = '', _tTimer = null;
+    const playerEl = document.getElementById('kodik-direct-player');
     videoEl.addEventListener('touchend', (e) => {
         e.preventDefault();
         const touch = e.changedTouches[0];
@@ -3070,46 +5240,32 @@ function loadKodikVideo(url) {
         _tCount++;
         if (_tCount === 1) {
             _tSide = side;
-            _tTimer = setTimeout(() => { _tCount = 0; toggleKodikPlay(); }, 280);
+            _tTimer = setTimeout(() => {
+                _tCount = 0;
+                if (!playerPlaybackStarted.kodik) showStartWatchOverlay('kodik');
+                else toggleKodikPlay();
+            }, 280);
         } else if (_tCount >= 2 && _tSide === side) {
             clearTimeout(_tTimer); _tCount = 0;
             const delta = side === 'right' ? 10 : -10;
-            videoEl.currentTime = Math.max(0, (videoEl.currentTime || 0) + delta);
+            seekVideoByDelta('kodik', videoEl, delta);
             showSeekOverlay(playerEl, side, delta);
         } else {
             clearTimeout(_tTimer); _tCount = 1; _tSide = side;
-            _tTimer = setTimeout(() => { _tCount = 0; toggleKodikPlay(); }, 280);
+            _tTimer = setTimeout(() => {
+                _tCount = 0;
+                if (!playerPlaybackStarted.kodik) showStartWatchOverlay('kodik');
+                else toggleKodikPlay();
+            }, 280);
         }
     }, { passive: false });
 
-    // Клавиатура: ← −10с, → +10с, пробел play/pause
-    if (kodikKeyListener) { document.removeEventListener('keydown', kodikKeyListener); }
-    kodikKeyListener = (e) => {
-        if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-        if (currentSection !== 'watch') return;
-        if (AUTO_SERVERS[currentServerIndex]?.type !== 'kodik') return;
-        const v = document.getElementById('kodik-video');
-        if (!v || v.classList.contains('hidden')) return;
-        if (e.key === 'ArrowRight') {
-            v.currentTime += 10;
-            showSeekOverlay(document.getElementById('kodik-direct-player'), 'right', 10);
-            e.preventDefault();
-        } else if (e.key === 'ArrowLeft') {
-            v.currentTime = Math.max(0, v.currentTime - 10);
-            showSeekOverlay(document.getElementById('kodik-direct-player'), 'left', -10);
-            e.preventDefault();
-        } else if (e.key === ' ') {
-            toggleKodikPlay(); e.preventDefault();
-        }
-    };
-    document.addEventListener('keydown', kodikKeyListener);
     lucide.createIcons();
 }
 
-function buildIframe(src) {
+function buildIframeInner(src) {
+    const safeSrc = escapeHtml(src || 'about:blank');
     return `
-    <div class="w-full h-full bg-black relative">
-        <!-- Сообщение при сбое (показывается через 8 сек если iframe не загрузился) -->
         <div id="player-error" class="absolute inset-0 z-10 hidden flex-col items-center justify-center gap-4 bg-[#0e0e0e] text-white text-center px-6">
             <i data-lucide="wifi-off" class="w-10 h-10 text-gray-500"></i>
             <p class="font-semibold">${t('player_error_title')}</p>
@@ -3118,20 +5274,38 @@ function buildIframe(src) {
                 <button onclick="nextServer()" class="px-4 py-2 bg-airbnb text-white rounded-xl text-sm font-semibold hover:bg-airbnbDark transition-colors">
                     ${t('next_server')}
                 </button>
-                <a href="${src}" target="_blank" rel="noopener" class="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-semibold hover:bg-white/20 transition-colors">
+                <a href="${safeSrc}" target="_blank" rel="noopener" class="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-semibold hover:bg-white/20 transition-colors">
                     ${t('open_browser_btn')}
                 </a>
             </div>
         </div>
         <iframe id="anime-iframe"
-            src="${src}"
+            src="${safeSrc}"
             class="w-full h-full border-0"
             allowfullscreen
             allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
             onload="onIframeLoad(this)"
             onerror="showPlayerError()">
-        </iframe>
+        </iframe>`;
+}
+
+function buildIframeLoadingShell() {
+    // У iframe-плееров свой интерфейс — обвязку/шапку AnyRainy не накладываем
+    return `
+    <div id="iframe-player" class="w-full h-full bg-black relative overflow-hidden flex items-center justify-center">
+        ${buildLoadingOverlayContent('iframe', true)}
     </div>`;
+}
+
+function buildIframePlayerShell(src) {
+    return `
+    <div id="iframe-player" class="w-full h-full bg-black relative overflow-hidden">
+        <div class="w-full h-full relative">${buildIframeInner(src)}</div>
+    </div>`;
+}
+
+function buildIframe(src) {
+    return `<div class="w-full h-full bg-black relative">${buildIframeInner(src)}</div>`;
 }
 
 function onIframeLoad(iframe) {
@@ -3146,85 +5320,143 @@ function showPlayerError() {
 
 // Переключиться на следующий плеер
 function nextServer() {
-    setServer((currentServerIndex + 1) % AUTO_SERVERS.length);
+    setServer((currentServerIndex + 1) % getActiveServers().length);
 }
 
 function setServer(idx) {
     clearTimeout(window._playerErrorTimer);
+    window._allohaAutoFallback = false; // ручной выбор плеера отключает авто-фолбэк
     stopLibriaGL();
     if (libriaHls) { libriaHls.destroy(); libriaHls = null; }
     if (kodikHls)  { kodikHls.destroy();  kodikHls  = null; }
-    if (kodikKeyListener) { document.removeEventListener('keydown', kodikKeyListener); kodikKeyListener = null; }
+    playerPlaybackStarted.kodik = false;
+    playerPlaybackStarted.libria = false;
+    _seekDragging.kodik = false;
+    _seekDragging.libria = false;
     currentServerIndex = idx;
     currentPlayerVoiceIdx = 0;
+    if (isKodikWatchPlayer()) ensureKodikTranslationForPlayer();
     const viewport = document.getElementById('player-viewport');
-    if (viewport) viewport.innerHTML = renderCurrentPlayer();
-    updateServerButtons();
-    lucide.createIcons();
-    const type = AUTO_SERVERS[idx]?.type;
-    if (type === 'kodik')  initKodikPlayer();
-    if (type === 'libria') initLibriaPlayer();
+    if (viewport) {
+        viewport.innerHTML = renderCurrentPlayer();
+        lucide.createIcons();
+        initCurrentPlayerType();
+    }
+    refreshPlayerChrome();
+    if (currentAnime) saveWatchProgress(currentAnime);
 }
 
 function updateServerButtons() {
-    AUTO_SERVERS.forEach((s, i) => {
+    getActiveServers().forEach((s, i) => {
         const btn = document.getElementById(`srv-btn-${i}`);
         if (!btn) return;
-        btn.className = i === currentServerIndex
-            ? 'px-4 py-2 bg-airbnb text-white rounded-xl font-bold text-xs transition-colors'
-            : 'px-4 py-2 bg-gray-100 dark:bg-[#2a2a2a] text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-[#333] rounded-xl font-bold text-xs transition-colors';
+        btn.className = `watch-source-pill${i === currentServerIndex ? ' watch-source-pill--active' : ''}`;
     });
-    // Показываем/скрываем дропдауны
-    const player = AUTO_SERVERS[currentServerIndex] || AUTO_SERVERS[0];
-    const dropdowns = document.getElementById('player-dropdowns');
-    if (dropdowns) dropdowns.classList.toggle('hidden', !!player.builtinSelection);
-    const voiceWrapper = document.getElementById('kodik-voice-wrapper');
-    if (voiceWrapper) voiceWrapper.classList.toggle('hidden', player.type !== 'kodik');
-    // Обновляем "В браузере"
     const openBtn = document.getElementById('open-in-browser');
-    if (openBtn && currentAnime) {
+    const player = getActiveServers()[currentServerIndex] || getActiveServers()[0];
+    if (openBtn && currentAnime && player) {
         if (player.type === 'kodik' && currentKodikTranslations.length) {
             openBtn.href = currentKodikTranslations[currentKodikTranslationIdx].link;
         } else if (player.type === 'libria') {
             openBtn.href = 'https://www.anilibria.tv/';
-        } else if (player.url) {
+        } else if (player.type === 'iframe' && player.url) {
             openBtn.href = player.url(currentAnime.malId, currentEpisodeNum);
         }
     }
 }
 
-function selectEpisode(num) {
+function selectEpisode(num, seasonId = null) {
     clearTimeout(window._playerErrorTimer);
     stopLibriaGL();
     if (libriaHls) { libriaHls.destroy(); libriaHls = null; }
     if (kodikHls)  { kodikHls.destroy();  kodikHls  = null; }
-    if (kodikKeyListener) { document.removeEventListener('keydown', kodikKeyListener); kodikKeyListener = null; }
+    if (seasonId != null) currentEpisodeSeasonId = seasonId;
+    else syncPlayerSeasonForEpisode(num);
     currentEpisodeNum = num;
+    saveWatchProgress(currentAnime, num);
     const viewport = document.getElementById('player-viewport');
-    if (viewport) viewport.innerHTML = renderCurrentPlayer();
-    updateServerButtons();
-    lucide.createIcons();
-    const type = AUTO_SERVERS[currentServerIndex]?.type;
-    if (type === 'kodik')  initKodikPlayer();
-    if (type === 'libria') initLibriaPlayer();
+    if (viewport) {
+        viewport.innerHTML = renderCurrentPlayer();
+        lucide.createIcons();
+        initCurrentPlayerType();
+    }
+    refreshPlayerChrome();
+}
+
+function initIframePlayer() {
+    clearTimeout(window._playerErrorTimer);
+    const player = getActiveServers()[currentServerIndex];
+    if (!player || player.type !== 'iframe' || !currentAnime) return;
+
+    const token = ++iframePlayerToken;
+
+    (async () => {
+        const src = await resolveIframeSrc(player, currentAnime.malId, currentEpisodeNum);
+        if (token !== iframePlayerToken) return;
+
+        const viewport = document.getElementById('player-viewport');
+        if (!src) {
+            // Приоритетная Aloha не резолвится (нет Kinopoisk id) — один раз падаем на AniLibria
+            if (window._allohaAutoFallback && player.key === 'alloha') {
+                window._allohaAutoFallback = false;
+                const fbIdx = Math.max(0, getWatchPlayerIndex('libria'));
+                if (fbIdx !== currentServerIndex) { setServer(fbIdx); return; }
+            }
+            if (viewport) {
+                viewport.innerHTML = buildIframePlayerShell('');
+                lucide.createIcons();
+            }
+            showPlayerError();
+            return;
+        }
+        // Aloha успешно открылась — фолбэк больше не нужен
+        if (player.key === 'alloha') window._allohaAutoFallback = false;
+
+        const iframe = document.getElementById('anime-iframe');
+        if (iframe) {
+            if (iframe.src !== src) iframe.src = src;
+        } else if (viewport) {
+            viewport.innerHTML = buildIframePlayerShell(src);
+            lucide.createIcons();
+            bindPlayerPickerEvents();
+        }
+
+        clearTimeout(window._playerErrorTimer);
+        window._playerErrorTimer = setTimeout(() => {
+            if (token !== iframePlayerToken) return;
+            if (getActiveServers()[currentServerIndex]?.type !== 'iframe') return;
+            if (!document.getElementById('anime-iframe')) return;
+            showPlayerError();
+        }, 18000);
+    })();
 }
 
 function selectVoice(idx) {
     clearTimeout(window._playerErrorTimer);
     if (kodikHls) { kodikHls.destroy(); kodikHls = null; }
     currentKodikTranslationIdx = idx;
+    currentKodikSeasons = null;
+    loadKodikSeasonsMetadata();
     const viewport = document.getElementById('player-viewport');
-    if (viewport) viewport.innerHTML = renderCurrentPlayer();
-    updateServerButtons();
-    initKodikPlayer();
+    if (viewport && isKodikWatchPlayer()) {
+        viewport.innerHTML = renderCurrentPlayer();
+        lucide.createIcons();
+        initCurrentPlayerType();
+    }
+    refreshPlayerChrome();
+    if (currentAnime) saveWatchProgress(currentAnime);
 }
 
 function selectPlayerVoice(idx) {
     clearTimeout(window._playerErrorTimer);
     currentPlayerVoiceIdx = idx;
     const viewport = document.getElementById('player-viewport');
-    if (viewport) viewport.innerHTML = renderCurrentPlayer();
-    updateServerButtons();
+    if (viewport) {
+        viewport.innerHTML = renderCurrentPlayer();
+        lucide.createIcons();
+        initCurrentPlayerType();
+    }
+    refreshPlayerChrome();
 }
 
 // Фиксируем взаимодействие пользователя с iframe-областью
@@ -3239,26 +5471,48 @@ function setupVideoListeners() {}
 function toggleKodikPlay() {
     const v = document.getElementById('kodik-video');
     if (!v) return;
-    v.paused ? v.play().catch(() => {}) : v.pause();
+    if (!playerPlaybackStarted.kodik) { startPlayerPlayback('kodik'); return; }
+    if (v.paused) v.play().catch(() => {});
+    else v.pause();
+}
+
+function updatePlayerPlayBtn(prefix, mode) {
+    const btn = document.getElementById(`${prefix}-play-btn`);
+    if (!btn) return;
+    btn.classList.toggle('is-buffering', mode === 'buffering');
+    if (mode === 'buffering') {
+        btn.innerHTML = '<span class="player-play-spinner" aria-hidden="true"></span>';
+    } else if (mode === 'paused') {
+        btn.innerHTML = '<i data-lucide="play" class="w-5 h-5"></i>';
+    } else {
+        btn.innerHTML = '<i data-lucide="pause" class="w-5 h-5"></i>';
+    }
+    lucide.createIcons();
+}
+
+function syncPlayerPlayBtn(prefix) {
+    const videoEl = getPlayerVideo(prefix);
+    if (!videoEl) return;
+    const st = playerBufferState[prefix];
+    const buffering = !!(st?.buffering && !videoEl.paused && playerPlaybackStarted[prefix]);
+    if (buffering) updatePlayerPlayBtn(prefix, 'buffering');
+    else if (videoEl.paused) updatePlayerPlayBtn(prefix, 'paused');
+    else updatePlayerPlayBtn(prefix, 'playing');
 }
 
 function updateKodikPlayBtn(isPaused) {
-    const btn = document.getElementById('kodik-play-btn');
-    if (!btn) return;
-    btn.innerHTML = isPaused
-        ? '<i data-lucide="play" class="w-5 h-5"></i>'
-        : '<i data-lucide="pause" class="w-5 h-5"></i>';
-    lucide.createIcons();
+    updatePlayerPlayBtn('kodik', isPaused ? 'paused' : 'playing');
 }
 
 function updateKodikTime() {
     const v = document.getElementById('kodik-video');
     const timeEl = document.getElementById('kodik-time');
-    const seekEl = document.getElementById('kodik-seek');
     if (!v || !timeEl) return;
     const fmt = s => isFinite(s) ? `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}` : '0:00';
     timeEl.textContent = `${fmt(v.currentTime)} / ${fmt(v.duration)}`;
-    if (seekEl && v.duration) seekEl.value = (v.currentTime / v.duration) * 100;
+    updateStartWatchTime('kodik', v);
+    if (!_seekDragging.kodik) updateSeekVisual('kodik', v);
+    if (!v.paused && playerPlaybackStarted.kodik) scheduleWatchProgressSave();
 }
 
 function toggleKodikMute() {
@@ -3330,39 +5584,139 @@ function _updateKodikFSBtn(isFS) {
     lucide.createIcons();
 }
 
+// ─── Player fit: масштаб + выравнивание (как в Kodik) ────────────────────────
+
+let playerZoom    = parseFloat(localStorage.getItem('anyrainy_player_zoom')) || 1;
+let playerStretch = localStorage.getItem('anyrainy_player_stretch') || 'none';
+
+const ZOOM_STEPS = [1, 1.1, 1.25, 1.5];
+const STRETCH_OPTS = [['none', 'Нет'], ['y', 'По вертикали'], ['x', 'По горизонтали']];
+
+function applyPlayerFitMode() {
+    const sx = playerZoom * (playerStretch === 'x' ? 1.18 : 1);
+    const sy = playerZoom * (playerStretch === 'y' ? 1.18 : 1);
+    const tf = (sx !== 1 || sy !== 1) ? `scale(${sx}, ${sy})` : '';
+    ['kodik-video', 'kodik-canvas', 'libria-canvas'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.transform = tf;
+    });
+    window._libriaFitNeedsUpdate = true;
+}
+
+function setPlayerZoom(z) {
+    playerZoom = z;
+    localStorage.setItem('anyrainy_player_zoom', String(z));
+    applyPlayerFitMode();
+    _rerenderFitPanels();
+}
+
+function setPlayerStretch(s) {
+    playerStretch = s;
+    localStorage.setItem('anyrainy_player_stretch', s);
+    applyPlayerFitMode();
+    _rerenderFitPanels();
+}
+
+function _fitOptBtn(onclick, label, active) {
+    return `<button type="button" onclick="${onclick}"
+        class="px-2 py-1 rounded-lg text-[11px] whitespace-nowrap transition-colors ${active
+            ? 'bg-airbnb text-white font-semibold'
+            : 'bg-white/5 text-white/70 hover:bg-white/10 hover:text-white'}">${label}</button>`;
+}
+
+function _fitPanelInner() {
+    const zoomBtns = ZOOM_STEPS.map(z =>
+        _fitOptBtn(`setPlayerZoom(${z})`, `${Math.round(z * 100)}%`, playerZoom === z)).join('');
+    const stBtns = STRETCH_OPTS.map(([k, l]) =>
+        _fitOptBtn(`setPlayerStretch('${k}')`, l, playerStretch === k)).join('');
+    return `
+        <p class="text-white/50 text-[10px] font-bold uppercase tracking-wider px-1 mb-1.5">Масштаб</p>
+        <div class="flex gap-1 mb-2.5">${zoomBtns}</div>
+        <p class="text-white/50 text-[10px] font-bold uppercase tracking-wider px-1 mb-1.5">Выравнивание</p>
+        <div class="flex flex-col gap-1 items-stretch">${stBtns}</div>`;
+}
+
+function buildFitPanel(prefix) {
+    return `
+        <div id="${prefix}-fit-panel" class="hidden absolute z-50" style="bottom:58px;right:44px;">
+            <div class="fit-panel-inner bg-[#111]/95 backdrop-blur-md border border-white/10 shadow-2xl rounded-xl p-2.5 min-w-[170px]">
+                ${_fitPanelInner()}
+            </div>
+        </div>`;
+}
+
+function _rerenderFitPanels() {
+    document.querySelectorAll('.fit-panel-inner').forEach(el => { el.innerHTML = _fitPanelInner(); });
+}
+
+function toggleFitPanel(prefix) {
+    closeQualityPanel('kodik');
+    closeQualityPanel('libria');
+    const other = prefix === 'kodik' ? 'libria' : 'kodik';
+    document.getElementById(`${other}-fit-panel`)?.classList.add('hidden');
+    const panel = document.getElementById(`${prefix}-fit-panel`);
+    if (!panel) return;
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) _rerenderFitPanels();
+}
+
+function buildFitBtn(prefix) {
+    return `<button onclick="toggleFitPanel('${prefix}')" id="${prefix}-fit-btn"
+        class="text-white/80 hover:text-white hover:text-airbnb transition-colors p-1" title="Масштаб и выравнивание">
+        <i data-lucide="settings-2" class="w-4 h-4"></i>
+    </button>`;
+}
+
+function proxifyAnilibria(url) {
+    if (!url) return url;
+    if (/anilibria\.|libria\.fun/i.test(url)) {
+        return `/hls-proxy?url=${encodeURIComponent(url)}`;
+    }
+    return url;
+}
+
+// Все запросы к AniLibria API идут через наш прокси (обход DPI)
+async function anilibriaFetch(apiUrl, options = {}) {
+    const proxyUrl = `/hls-proxy?url=${encodeURIComponent(apiUrl)}`;
+    return fetch(proxyUrl, options);
+}
+
 // ─── AniLibria API ────────────────────────────────────────────────────────────
 
 async function fetchAnilibriaTitle(anime) {
     const key = anime.malId;
     if (anilibriaCache[key] !== undefined) return anilibriaCache[key];
 
-    const queries = [anime.title, anime.titleEn, anime.titleRu]
+    const queries = [anime.titleRu, anime.titleEn, anime.title]
         .filter(Boolean)
         .filter((v, i, a) => a.indexOf(v) === i);
 
-    for (const q of queries) {
-        try {
-            const res = await fetch(
-                `https://anilibria.top/api/v1/app/search/releases?query=${encodeURIComponent(q)}&limit=3`,
-                { signal: AbortSignal.timeout(5000) }
-            );
-            if (!res.ok) continue;
-            const data = await res.json();
-            if (Array.isArray(data) && data.length > 0) {
-                // Получаем полные данные с эпизодами
-                const full = await fetch(
-                    `https://anilibria.top/api/v1/anime/releases/${data[0].id}`,
-                    { signal: AbortSignal.timeout(5000) }
-                );
-                if (full.ok) {
-                    const release = await full.json();
-                    anilibriaCache[key] = release;
-                    return release;
-                }
-            }
-        } catch (_) {}
+    const searchOne = async (q) => {
+        const res = await anilibriaFetch(
+            `https://anilibria.top/api/v1/app/search/releases?query=${encodeURIComponent(q)}&limit=3`,
+            { signal: AbortSignal.timeout(8000) }
+        );
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (!Array.isArray(data) || !data.length) return null;
+        const hit = data[0];
+        if (hit.episodes?.length) return hit;
+        const full = await anilibriaFetch(
+            `https://anilibria.top/api/v1/anime/releases/${hit.id}`,
+            { signal: AbortSignal.timeout(8000) }
+        );
+        if (!full.ok) return null;
+        return full.json();
+    };
+
+    const results = await Promise.allSettled(queries.map(searchOne));
+    for (const r of results) {
+        if (r.status === 'fulfilled' && r.value?.episodes?.length) {
+            anilibriaCache[key] = r.value;
+            return r.value;
+        }
     }
-    anilibriaCache[key] = null;
+    // Не кэшируем null — при следующей попытке попробуем снова
     return null;
 }
 
@@ -3374,46 +5728,99 @@ async function getAnilibriaEpisodeUrl(anime, ep) {
     return epData.hls_1080 || epData.hls_720 || epData.hls_480 || null;
 }
 
+async function getAnilibriaEpisodeUrls(anime, ep) {
+    const title = await fetchAnilibriaTitle(anime);
+    if (!title?.episodes?.length) return {};
+    const epData = title.episodes.find(e => e.ordinal === ep || e.ordinal === String(ep));
+    if (!epData) return {};
+    const map = {};
+    if (epData.hls_480)  map['480p']  = epData.hls_480;
+    if (epData.hls_720)  map['720p']  = epData.hls_720;
+    if (epData.hls_1080) map['1080p'] = epData.hls_1080;
+    if (epData.hls_1080) map['4K ✦'] = epData.hls_1080; // WebGL upscale 2×
+    return map;
+}
+
 async function initLibriaPlayer() {
     const token = ++libriaPlayerToken;
-    if (AUTO_SERVERS[currentServerIndex]?.type !== 'libria') return;
+    if (getActiveServers()[currentServerIndex]?.type !== 'libria') return;
 
-    const url = await getAnilibriaEpisodeUrl(currentAnime, currentEpisodeNum);
+    startLoadingProgress('libria');
+
+    let map;
+    if (Object.keys(libriaQualityMap).length && libriaQualityEp === currentEpisodeNum) {
+        map = libriaQualityMap;
+    } else {
+        map = await getAnilibriaEpisodeUrls(currentAnime, currentEpisodeNum);
+        libriaQualityMap = map;
+        libriaQualityEp = currentEpisodeNum;
+    }
 
     if (token !== libriaPlayerToken) return;
     if (!document.getElementById('libria-loading')) return;
 
+    const url = map['1080p'] || map['720p'] || map['480p'];
     if (!url) {
+        stopLoadingProgress('libria');
         const loadingEl = document.getElementById('libria-loading');
         const errEl = document.getElementById('libria-error');
         if (loadingEl) loadingEl.classList.add('hidden');
         if (errEl) { errEl.classList.remove('hidden'); lucide.createIcons(); }
         return;
     }
-    loadLibriaVideo(url);
+
+    libriaQualityMap = map;
+    refreshPlayerPickerInPlace();
+    // Respect a quality pre-selected by cross-engine switch
+    const pendingQ = window._pendingLibriaQuality;
+    window._pendingLibriaQuality = null;
+    if (pendingQ && map[pendingQ]) {
+        libriaCurrentQuality = pendingQ;
+        libriaUpscale4K = (pendingQ === '4K ✦');
+        loadLibriaVideo(map[pendingQ]);
+    } else if (libriaCurrentQuality && map[libriaCurrentQuality]) {
+        libriaUpscale4K = (libriaCurrentQuality === '4K ✦');
+        loadLibriaVideo(map[libriaCurrentQuality]);
+    } else {
+        libriaCurrentQuality = map['1080p'] ? '1080p' : map['720p'] ? '720p' : '480p';
+        libriaUpscale4K = false;
+        loadLibriaVideo(url);
+    }
 }
 
 function loadLibriaVideo(url) {
+    url = proxifyAnilibria(url);
     const loadingEl = document.getElementById('libria-loading');
     const videoEl   = document.getElementById('libria-video');
     const canvasEl  = document.getElementById('libria-canvas');
     const ctrlEl    = document.getElementById('libria-controls');
     if (!videoEl || !canvasEl) return;
 
+    playerPlaybackStarted.libria = false;
+    _pendingSeekPct.libria = null;
+    playerBufferState.libria = { buffering: false, loadingFrag: false, speedBps: 0 };
+
+    finishLoadingProgress('libria');
+    stopLoadingProgress('libria');
     if (loadingEl) loadingEl.classList.add('hidden');
     canvasEl.classList.remove('hidden');
-    if (ctrlEl) ctrlEl.classList.remove('hidden');
+    if (ctrlEl) { ctrlEl.classList.remove('hidden'); ctrlEl.style.opacity = '1'; }
 
     stopLibriaGL();
     if (libriaHls) { libriaHls.destroy(); libriaHls = null; }
 
+    const onReady = () => {
+        updateLibriaTime();
+        updateSeekVisual('libria', videoEl);
+        applyResumePosition('libria');
+        autoplayOrPrompt('libria');
+    };
+
     if (Hls.isSupported()) {
-        libriaHls = new Hls({ maxBufferLength: 30 });
+        libriaHls = new Hls({ ...HLS_FAST_OPTS, abrBandWidthFactor: 0.95, abrBandWidthUpFactor: 0.9 });
         libriaHls.loadSource(url);
         libriaHls.attachMedia(videoEl);
-        libriaHls.once(Hls.Events.MANIFEST_PARSED, () => {
-            videoEl.play().catch(() => {});
-        });
+        libriaHls.once(Hls.Events.MANIFEST_PARSED, onReady);
         libriaHls.on(Hls.Events.ERROR, (e, data) => {
             if (data.fatal) {
                 const errEl = document.getElementById('libria-error');
@@ -3421,26 +5828,41 @@ function loadLibriaVideo(url) {
                 if (errEl) { errEl.classList.remove('hidden'); lucide.createIcons(); }
             }
         });
+        bindHlsBufferEvents(libriaHls, 'libria', videoEl);
     } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-        videoEl.src = url; videoEl.load(); videoEl.play().catch(() => {});
+        videoEl.src = url;
+        videoEl.load();
+        videoEl.addEventListener('loadedmetadata', onReady, { once: true });
     }
 
-    initWebGLUpscaler(canvasEl, videoEl);
+    _initLibriaGL(canvasEl, videoEl);
+    applyPlayerFitMode();
 
     videoEl.addEventListener('timeupdate', updateLibriaTime);
-    videoEl.addEventListener('play',  () => updateLibriaPlayBtn(false));
-    videoEl.addEventListener('pause', () => updateLibriaPlayBtn(true));
+    videoEl.addEventListener('play',  () => { updateLibriaPlayBtn(false); showPlayerControls('libria'); });
+    videoEl.addEventListener('pause', () => { updateLibriaPlayBtn(true);  showPlayerControls('libria'); });
+    videoEl.addEventListener('loadedmetadata', () => {
+        if (_pendingSeekPct.libria != null) {
+            seekVideoTo('libria', videoEl, _pendingSeekPct.libria * videoEl.duration);
+            _pendingSeekPct.libria = null;
+        }
+        updateLibriaTime();
+    });
+    videoEl.addEventListener('seeked', () => updateLibriaTime());
 
-    const seekEl = document.getElementById('libria-seek');
-    if (seekEl) {
-        seekEl.addEventListener('input', () => {
-            if (videoEl.duration) videoEl.currentTime = (seekEl.value / 100) * videoEl.duration;
-        });
-    }
+    bindVideoBufferEvents(videoEl, 'libria');
+    initSeekDrag('libria-seek-track', videoEl, 'libria');
+
+    // Инициализируем панель качества
+    renderQualityPanel('libria');
+    updateQualityLabel('libria', libriaCurrentQuality || '1080p');
+    showPlayerControls('libria');
 
     // Клик мышью → play/pause
     canvasEl.addEventListener('click', (e) => {
-        if (e.pointerType === 'touch') return; // обрабатывается touchend
+        if (e.pointerType === 'touch') return;
+        if (_seekDragging.libria) return;
+        if (!playerPlaybackStarted.libria) { showStartWatchOverlay('libria'); return; }
         toggleLibriaPlay();
     });
 
@@ -3456,46 +5878,30 @@ function loadLibriaVideo(url) {
         _tapCount++;
         if (_tapCount === 1) {
             _tapSide = side;
-            _tapTimer = setTimeout(() => { _tapCount = 0; toggleLibriaPlay(); }, 280);
+            _tapTimer = setTimeout(() => {
+                _tapCount = 0;
+                if (!playerPlaybackStarted.libria) showStartWatchOverlay('libria');
+                else toggleLibriaPlay();
+            }, 280);
         } else if (_tapCount >= 2 && _tapSide === side) {
             clearTimeout(_tapTimer); _tapCount = 0;
             const delta = side === 'right' ? 10 : -10;
-            videoEl.currentTime = Math.max(0, (videoEl.currentTime || 0) + delta);
+            seekVideoByDelta('libria', videoEl, delta);
             showSeekOverlay(canvasEl.parentElement, side, delta);
         } else {
             clearTimeout(_tapTimer); _tapCount = 1; _tapSide = side;
-            _tapTimer = setTimeout(() => { _tapCount = 0; toggleLibriaPlay(); }, 280);
+            _tapTimer = setTimeout(() => {
+                _tapCount = 0;
+                if (!playerPlaybackStarted.libria) showStartWatchOverlay('libria');
+                else toggleLibriaPlay();
+            }, 280);
         }
     }, { passive: false });
-
-    // Клавиатура: ← −10с, → +10с, пробел play/pause
-    libriaKeyListener = (e) => {
-        if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
-        if (currentSection !== 'watch') return;
-        if (AUTO_SERVERS[currentServerIndex]?.type !== 'libria') return;
-        const v = document.getElementById('libria-video');
-        if (!v) return;
-        const player = document.getElementById('libria-player');
-        if (e.key === 'ArrowRight') {
-            v.currentTime += 10;
-            showSeekOverlay(player, 'right', 10);
-            e.preventDefault();
-        } else if (e.key === 'ArrowLeft') {
-            v.currentTime = Math.max(0, v.currentTime - 10);
-            showSeekOverlay(player, 'left', -10);
-            e.preventDefault();
-        } else if (e.key === ' ') {
-            toggleLibriaPlay();
-            e.preventDefault();
-        }
-    };
-    document.addEventListener('keydown', libriaKeyListener);
 }
 
 function stopLibriaGL() {
     if (libriaRafId) { cancelAnimationFrame(libriaRafId); libriaRafId = null; }
     libriaGlContext = null;
-    if (libriaKeyListener) { document.removeEventListener('keydown', libriaKeyListener); libriaKeyListener = null; }
 }
 
 // Оверлей +10 / -10 секунд
@@ -3533,12 +5939,22 @@ function createGLProgram(gl, vsSource, fsSource) {
         : (console.warn('Program error:', gl.getProgramInfoLog(p)), null);
 }
 
+function _initLibriaGL(canvas, video) {
+    const dpr = libriaUpscale4K ? 2 : 1;
+    const container = canvas.parentElement;
+    canvas.width  = (container?.clientWidth  || 1280) * dpr;
+    canvas.height = (container?.clientHeight || 720)  * dpr;
+    initWebGLUpscaler(canvas, video);
+}
+
 function initWebGLUpscaler(canvas, video) {
     stopLibriaGL();
 
     const container = canvas.parentElement;
-    canvas.width  = container?.clientWidth  || 1280;
-    canvas.height = container?.clientHeight || 720;
+    if (!canvas.width || canvas.width < 4) {
+        canvas.width  = container?.clientWidth  || 1280;
+        canvas.height = container?.clientHeight || 720;
+    }
 
     const gl = canvas.getContext('webgl', { antialias: false, preserveDrawingBuffer: false });
     if (!gl) {
@@ -3596,11 +6012,11 @@ function initWebGLUpscaler(canvas, video) {
 
     const posBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.DYNAMIC_DRAW);
 
     const uvBuf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,1, 1,1, 0,0, 1,0]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,1, 1,1, 0,0, 1,0]), gl.DYNAMIC_DRAW);
 
     const aPos = gl.getAttribLocation(prog, 'a_pos');
     const aUv  = gl.getAttribLocation(prog, 'a_uv');
@@ -3617,6 +6033,7 @@ function initWebGLUpscaler(canvas, video) {
 
     const captureGl = gl;
 
+    let _lastFit = '';
     function frame() {
         if (libriaGlContext !== captureGl) return;
 
@@ -3631,7 +6048,31 @@ function initWebGLUpscaler(canvas, video) {
             } catch (_) { /* cross-origin fallback */ }
         }
 
+        // Fit mode: update buffers when mode or size changes
+        const fm = playerFitMode;
+        if (fm !== _lastFit || window._libriaFitNeedsUpdate) {
+            _lastFit = fm;
+            window._libriaFitNeedsUpdate = false;
+            const vAR = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16/9;
+            const cAR = canvas.width && canvas.height ? canvas.width / canvas.height : 16/9;
+            let pos = [-1,-1, 1,-1, -1,1, 1,1];
+            let uv  = [0,1, 1,1, 0,0, 1,0];
+            if (fm === 'cover') {
+                if (vAR > cAR) { const s = cAR/vAR, off=(1-s)/2; uv=[off,1, 1-off,1, off,0, 1-off,0]; }
+                else            { const s = vAR/cAR, off=(1-s)/2; uv=[0,1-off, 1,1-off, 0,off, 1,off]; }
+            } else if (fm === 'contain') {
+                if (vAR > cAR) { const ys=cAR/vAR; pos=[-1,-ys,1,-ys,-1,ys,1,ys]; }
+                else            { const xs=vAR/cAR; pos=[-xs,-1,xs,-1,-xs,1,xs,1]; }
+            }
+            gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(pos), gl.DYNAMIC_DRAW);
+            gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(uv), gl.DYNAMIC_DRAW);
+        }
+
         gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
         gl.uniform2f(uRes, canvas.width, canvas.height);
 
         gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
@@ -3648,12 +6089,1571 @@ function initWebGLUpscaler(canvas, video) {
     libriaRafId = requestAnimationFrame(frame);
 }
 
+let playerVoiceSearchQ = '';
+
+// ─── Watch player chrome (AnimeOn-style layout) ───────────────────────────────
+
+function buildPlayerTitleOverlay() {
+    if (!currentAnime) return '';
+    return `
+        <div class="watch-video-overlay-top">
+            <p class="watch-video-title">${escapeHtml(currentAnime.displayTitle)}</p>
+            <div class="watch-video-badges">
+                <span class="watch-ep-badge">${escapeHtml(t('ep_badge_label', currentEpisodeNum))}</span>
+                <span class="watch-brand-badge">AnyRainy</span>
+            </div>
+        </div>`;
+}
+
+function getSidebarVoiceEntries() {
+    if (isHentaiAnime(currentAnime)) return [];
+
+    const entries = [];
+    const activeKey = getActiveServers()[currentServerIndex]?.key;
+
+    // Международные дорожки — в самом верху, переключают на соответствующий плеер
+    if (getWatchPlayerIndex('megaplay-dub') >= 0) {
+        entries.push({
+            label: 'Английский даб + субтитры', badge: 'EN',
+            active: activeKey === 'megaplay-dub', playerKey: 'megaplay-dub',
+            searchText: 'english dub английский даб субтитры',
+        });
+    }
+    if (getWatchPlayerIndex('megaplay') >= 0) {
+        entries.push({
+            label: 'Японский + субтитры', badge: 'JP',
+            active: activeKey === 'megaplay', playerKey: 'megaplay',
+            searchText: 'japanese sub японский оригинал субтитры',
+        });
+    }
+
+    // Русские озвучки (Kodik)
+    currentKodikTranslations.forEach((tr, i) => {
+        const label = tr.title;
+        entries.push({
+            label,
+            badge: /4k/i.test(label) ? '4K' : null,
+            active: isKodikWatchPlayer() && currentKodikTranslationIdx === i,
+            voiceIdx: i,
+            searchText: label.toLowerCase(),
+        });
+    });
+    return entries;
+}
+
+// Атрибут кнопки озвучки: спец-запись ведёт на плеер, обычная — на индекс Kodik
+function voiceBtnAttr(e) {
+    return e.playerKey ? `data-voice-player="${escapeHtml(e.playerKey)}"` : `data-voice-idx="${e.voiceIdx}"`;
+}
+
+function shouldShowVoiceSidebar() {
+    return getSidebarVoiceEntries().length > 0;
+}
+
+function buildWatchLayoutSettingHtml() {
+    const h = watchPlayerLayout === 'horizontal';
+    return `
+        <div class="watch-layout-setting" role="group" aria-label="${escapeHtml(t('watch_layout_label'))}">
+            <span class="watch-layout-label">${t('watch_layout_label')}</span>
+            <div class="watch-layout-btns">
+                <button type="button" data-watch-layout="horizontal"
+                    class="watch-layout-btn${h ? ' watch-layout-btn--active' : ''}"
+                    title="${escapeHtml(t('watch_layout_horizontal'))}">
+                    <i data-lucide="columns-2" class="w-4 h-4"></i>
+                </button>
+                <button type="button" data-watch-layout="vertical"
+                    class="watch-layout-btn${!h ? ' watch-layout-btn--active' : ''}"
+                    title="${escapeHtml(t('watch_layout_vertical'))}">
+                    <i data-lucide="rows-2" class="w-4 h-4"></i>
+                </button>
+                <button type="button" onclick="toggleWatchSidebar()"
+                    class="watch-layout-btn watch-sidebar-hide-btn${watchSidebarCollapsed ? ' watch-layout-btn--active' : ''}"
+                    title="Скрыть панель озвучки и плеера">
+                    <i data-lucide="panel-right-close" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </div>`;
+}
+
+function buildWatchPlayerTabInner() {
+    const activeKey = getActiveServers()[currentServerIndex]?.key;
+    return `<div class="watch-sidebar-list watch-sidebar-list--anim" role="list">
+        ${getActiveServers().map((s, i) => `
+            <button type="button" role="listitem" data-watch-player="${s.key}" style="--i:${i}"
+                class="watch-sidebar-player-item${s.key === activeKey ? ' watch-sidebar-player-item--active' : ''}">
+                ${escapeHtml(s.name)}
+            </button>`).join('')}
+    </div>`;
+}
+
+function buildWatchVoiceTabInner() {
+    const entries = getSidebarVoiceEntries();
+    if (!entries.length) {
+        return `<p class="watch-sidebar-empty">${escapeHtml(t('kodik_unavailable'))}</p>`;
+    }
+    return `<div class="watch-sidebar-list watch-sidebar-list--anim" id="voice-sidebar-list">
+        ${entries.map((e, i) => `
+            <button type="button" ${voiceBtnAttr(e)} style="--i:${i}"
+                class="watch-sidebar-voice-item${e.active ? ' watch-sidebar-voice-item--active' : ''}">
+                <span class="watch-sidebar-voice-label">${escapeHtml(e.label)}</span>
+                ${e.badge ? `<span class="voice-sidebar-badge">${e.badge}</span>` : ''}
+            </button>`).join('')}
+    </div>`;
+}
+
+function buildWatchSidebarInner() {
+    const voiceActive = watchSidebarTab === 'voice';
+    const playerActive = watchSidebarTab === 'player';
+    return `
+        <div class="watch-sidebar-tabs" role="tablist">
+            <button type="button" role="tab" data-sidebar-tab="voice"
+                aria-selected="${voiceActive}"
+                class="watch-sidebar-tab${voiceActive ? ' watch-sidebar-tab--active' : ''}">
+                ${t('voice_panel')}
+            </button>
+            <button type="button" role="tab" data-sidebar-tab="player"
+                aria-selected="${playerActive}"
+                class="watch-sidebar-tab${playerActive ? ' watch-sidebar-tab--active' : ''}">
+                ${t('server_panel')}
+            </button>
+        </div>
+        <div class="watch-sidebar-progress"><div class="watch-sidebar-progress-fill"></div></div>
+        <div class="watch-sidebar-panel" role="tabpanel" onscroll="updateSidebarScrollProgress(this)">
+            ${voiceActive ? buildWatchVoiceTabInner() : buildWatchPlayerTabInner()}
+        </div>`;
+}
+
+// Вертикальный индикатор прокрутки справа: тумб отражает позицию и долю прокрутки
+function updateSidebarScrollProgress(panel) {
+    const sidebar = panel.parentElement;
+    const track = sidebar?.querySelector('.watch-sidebar-progress');
+    const thumb = sidebar?.querySelector('.watch-sidebar-progress-fill');
+    if (!track || !thumb) return;
+    // Накладываем трек ровно на область панели
+    track.style.top = panel.offsetTop + 'px';
+    track.style.height = panel.clientHeight + 'px';
+    const scrollable = panel.scrollHeight - panel.clientHeight;
+    if (scrollable <= 4) { track.style.opacity = '0'; return; }
+    track.style.opacity = '1';
+    const thumbPct = Math.max(14, (panel.clientHeight / panel.scrollHeight) * 100);
+    const topPct = (panel.scrollTop / panel.scrollHeight) * 100;
+    thumb.style.height = thumbPct + '%';
+    thumb.style.top = topPct + '%';
+}
+
+function buildPlayerToolbarInner() {
+    return buildPlayerEpisodesBlock();
+}
+
+function setWatchSidebarTab(tab) {
+    if (tab !== 'voice' && tab !== 'player') return;
+    watchSidebarTab = tab;
+    const sidebar = document.getElementById('player-sidebar');
+    if (sidebar) sidebar.innerHTML = buildWatchSidebarInner();
+    lucide.createIcons();
+    requestAnimationFrame(() => {
+        const p = document.querySelector('.watch-sidebar-panel');
+        if (p) updateSidebarScrollProgress(p);
+    });
+}
+
+function selectWatchPlayer(key) {
+    const idx = getWatchPlayerIndex(key);
+    if (idx < 0) return;
+    watchSidebarTab = 'player';
+    if (idx !== currentServerIndex) setServer(idx);
+    else refreshPlayerChrome();
+}
+
+function buildPlayerVoiceSidebarInner() {
+    const all = getSidebarVoiceEntries();
+    const q = playerVoiceSearchQ.trim().toLowerCase();
+    const filtered = q
+        ? all.filter(e => e.label.toLowerCase().includes(q) || (e.searchText || '').includes(q))
+        : all;
+
+    const items = filtered.length
+        ? filtered.map(e => `
+            <button type="button" ${voiceBtnAttr(e)}
+                class="voice-sidebar-item${e.active ? ' voice-sidebar-item--active' : ''}">
+                <span class="voice-sidebar-item-label">${escapeHtml(e.label)}</span>
+                ${e.badge ? `<span class="voice-sidebar-badge">${e.badge}</span>` : ''}
+            </button>`).join('')
+        : `<p class="voice-sidebar-empty">${escapeHtml(t('nothing_found'))}</p>`;
+
+    return `
+        <div class="voice-sidebar-head">
+            <span class="voice-sidebar-title">${t('voice_panel')}</span>
+            <span class="voice-sidebar-count">${all.length}</span>
+        </div>
+        <input type="text" id="voice-sidebar-search" class="voice-sidebar-search"
+            placeholder="${escapeHtml(t('voice_search_placeholder'))}"
+            value="${escapeHtml(playerVoiceSearchQ)}"
+            oninput="filterPlayerVoiceSearch(this.value)">
+        <div class="voice-sidebar-list" id="voice-sidebar-list">${items}</div>`;
+}
+
+function getPlayerSeasons() {
+    if (currentKodikSeasons?.length > 1) return currentKodikSeasons;
+    return [];
+}
+
+function getActiveSeasonEpisodes() {
+    const seasons = getPlayerSeasons();
+    if (!seasons.length) return getPlayerEpisodeNums();
+    const idx = Math.min(currentPlayerSeasonIdx, seasons.length - 1);
+    return seasons[idx].episodes;
+}
+
+function shouldShowEpisodesMoreBtn() {
+    return getActiveSeasonEpisodes().length > EP_GRID_COLLAPSE_THRESHOLD && !playerEpisodesExpanded;
+}
+
+function getCurrentEpisodeMeta() {
+    const list = currentAnime?.episodesList || [];
+    if (!list.length || currentEpisodeNum < 1) return null;
+    const title = list[currentEpisodeNum - 1];
+    if (!title) return null;
+    return { title };
+}
+
+// Балансеры по Kinopoisk id (Alloha/Collaps/Turbo) не используют наш номер серии —
+// у них свой выбор серий/сезонов внутри iframe. Наши кнопки серий тут бесполезны.
+const NON_EPISODE_PLAYER_KEYS = new Set(['alloha', 'collaps', 'turbo']);
+function currentPlayerUsesEpisodes() {
+    const key = getActiveServers()[currentServerIndex]?.key;
+    return !NON_EPISODE_PLAYER_KEYS.has(key);
+}
+
+function buildPlayerEpisodesBlock() {
+    if (!currentPlayerUsesEpisodes()) {
+        return `
+        <div class="watch-episodes-block">
+            <div class="watch-ep-internal-hint">
+                <i data-lucide="list-video" class="w-4 h-4"></i>
+                <span>${t('episodes_inside_player')}</span>
+            </div>
+        </div>`;
+    }
+    const allInSeason = getActiveSeasonEpisodes();
+    if (allInSeason.length <= 1) return '';
+
+    const seasons = getPlayerSeasons();
+    const activeSeason = seasons[currentPlayerSeasonIdx];
+    const seasonId = activeSeason?.id ?? null;
+    const showMore = shouldShowEpisodesMoreBtn();
+    const showLess = playerEpisodesExpanded && allInSeason.length > EP_GRID_COLLAPSE_THRESHOLD;
+    const gridClass = showMore && !playerEpisodesExpanded
+        ? 'watch-ep-grid watch-ep-grid--collapsed'
+        : 'watch-ep-grid';
+
+    const seasonTabs = seasons.length > 1
+        ? `<div class="watch-ep-seasons" role="tablist">
+            ${seasons.map((s, i) => `
+                <button type="button" role="tab" data-season-idx="${i}"
+                    aria-selected="${i === currentPlayerSeasonIdx}"
+                    class="watch-ep-season-tab${i === currentPlayerSeasonIdx ? ' watch-ep-season-tab--active' : ''}">
+                    ${escapeHtml(s.label)}
+                </button>`).join('')}
+           </div>`
+        : '';
+
+    const epChips = allInSeason.map(n => `
+        <button type="button" data-ep-num="${n}"${seasonId ? ` data-ep-season="${escapeHtml(seasonId)}"` : ''}
+            class="watch-ep-chip${n === currentEpisodeNum ? ' watch-ep-chip--active' : ''}">${n}</button>`).join('');
+
+    const meta = getCurrentEpisodeMeta();
+    const metaHtml = meta?.title
+        ? `<p class="watch-ep-meta-line">${escapeHtml(t('ep_meta_title', meta.title))}</p>`
+        : '';
+
+    return `
+        <div class="watch-episodes-block">
+            ${seasonTabs}
+            <div class="watch-episodes-head">
+                <span class="watch-episodes-label">${t('episode_label')}</span>
+                <span class="watch-episodes-current">${escapeHtml(t('picker_current_ep', currentEpisodeNum))}</span>
+            </div>
+            <div class="${gridClass}">${epChips}</div>
+            ${metaHtml ? `<div class="watch-ep-meta">${metaHtml}</div>` : ''}
+            ${showMore || showLess ? `
+                <button type="button" class="watch-ep-more" data-ep-expand="1">
+                    ${showMore ? t('show_more_episodes') : t('show_less_episodes')}
+                </button>` : ''}
+        </div>`;
+}
+
+function scrollActiveEpisodeIntoView() {
+    requestAnimationFrame(() => {
+        document.querySelector('.watch-ep-grid .watch-ep-chip--active')
+            ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+}
+
+function togglePlayerEpisodesExpanded() {
+    playerEpisodesExpanded = !playerEpisodesExpanded;
+    refreshPlayerChrome(true);
+}
+
+function selectPlayerSeason(idx) {
+    const seasons = getPlayerSeasons();
+    if (idx < 0 || idx >= seasons.length) return;
+    currentPlayerSeasonIdx = idx;
+    currentEpisodeSeasonId = seasons[idx].id;
+    const eps = seasons[idx].episodes;
+    if (!eps.includes(currentEpisodeNum)) {
+        selectEpisode(eps[0] ?? 1, seasons[idx].id);
+    } else {
+        refreshPlayerChrome(true);
+    }
+}
+
+function buildWatchPageControlsInner() {
+    const sourcePills = getActiveServers().map((s, i) => {
+        const active = i === currentServerIndex;
+        return `<button type="button" id="srv-btn-${i}" data-server-idx="${i}"
+            class="watch-source-pill${active ? ' watch-source-pill--active' : ''}">
+            ${escapeHtml(s.name)}
+        </button>`;
+    }).join('');
+
+    return `
+        ${buildPlayerEpisodesBlock()}
+        <div class="watch-toolbar-source">
+            <span class="watch-toolbar-label">${t('player_source_label')}</span>
+            <div class="watch-source-pills">${sourcePills}</div>
+        </div>`;
+}
+
+function buildPlayerModalInner() {
+    return `
+        <div class="watch-player-block">
+            <div class="watch-player-layout${shouldShowVoiceSidebar() ? '' : ' watch-player-layout--no-sidebar'}">
+                <div class="watch-player-main">
+                    <div class="watch-player-frame watch-player-frame--modal">
+                        <div id="player-viewport" class="absolute inset-0 w-full h-full">
+                            ${renderCurrentPlayer()}
+                        </div>
+                    </div>
+                </div>
+                <aside id="player-sidebar" class="watch-player-sidebar${shouldShowVoiceSidebar() ? '' : ' hidden'}">
+                    ${buildPlayerVoiceSidebarInner()}
+                </aside>
+            </div>
+        </div>`;
+}
+
+function updateWatchOpenBtnLabel() {
+    const label = document.getElementById('watch-open-player-label');
+    if (label) label.textContent = t('watch_play_btn', currentEpisodeNum);
+}
+
+function initCurrentPlayerType() {
+    const player = getActiveServers()[currentServerIndex];
+    if (player?.type === 'kodik') initKodikPlayer();
+    else if (player?.type === 'libria') initLibriaPlayer();
+    else if (player?.type === 'iframe') initIframePlayer();
+}
+
+function pauseActivePlayers() {
+    document.getElementById('kodik-video')?.pause();
+    document.getElementById('libria-video')?.pause();
+}
+
+function openPlayerModal() {
+    const modal = document.getElementById('player-modal');
+    const body = document.getElementById('player-modal-body');
+    const titleEl = document.getElementById('player-modal-title');
+    if (!modal || !body) return;
+
+    if (titleEl && currentAnime) titleEl.textContent = currentAnime.displayTitle;
+    body.innerHTML = buildPlayerModalInner();
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('player-modal-open');
+    playerModalOpen = true;
+
+    bindPlayerModalEvents();
+    refreshPlayerModalChrome(true);
+    lucide.createIcons();
+    initCurrentPlayerType();
+}
+
+function closePlayerModal() {
+    const modal = document.getElementById('player-modal');
+    if (!modal) return;
+    pauseActivePlayers();
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('player-modal-open');
+    playerModalOpen = false;
+    const body = document.getElementById('player-modal-body');
+    if (body) body.innerHTML = '';
+}
+
+function filterPlayerVoiceSearch(q) {
+    playerVoiceSearchQ = q;
+    watchSidebarTab = 'voice';
+    const list = document.getElementById('voice-sidebar-list');
+    const sidebar = document.getElementById('player-sidebar');
+    if (sidebar) sidebar.innerHTML = buildWatchSidebarInner();
+    else if (list) {
+        const all = getSidebarVoiceEntries();
+        const ql = q.trim().toLowerCase();
+        const filtered = ql
+            ? all.filter(e => e.label.toLowerCase().includes(ql) || (e.searchText || '').includes(ql))
+            : all;
+        list.innerHTML = filtered.length
+            ? filtered.map(e => `
+                <button type="button" ${voiceBtnAttr(e)}
+                    class="voice-sidebar-item${e.active ? ' voice-sidebar-item--active' : ''}">
+                    <span class="voice-sidebar-item-label">${escapeHtml(e.label)}</span>
+                    ${e.badge ? `<span class="voice-sidebar-badge">${e.badge}</span>` : ''}
+                </button>`).join('')
+            : `<p class="voice-sidebar-empty">${escapeHtml(t('nothing_found'))}</p>`;
+    }
+}
+
+// Спец-запись озвучки (Английский/Японский) — переключает на нужный плеер, остаётся на вкладке «Озвучка»
+function selectVoicePlayer(key) {
+    const idx = getWatchPlayerIndex(key);
+    if (idx < 0) return;
+    watchSidebarTab = 'voice';
+    window._allohaAutoFallback = false;
+    if (idx !== currentServerIndex) setServer(idx);
+    else refreshPlayerChrome(true);
+}
+
+function selectSidebarKodikVoice(i) {
+    let kodikIdx = getWatchPlayerIndex('kodik');
+    if (kodikIdx < 0) kodikIdx = getWatchPlayerIndex('kodik-embed');
+    if (kodikIdx < 0) return;
+    watchSidebarTab = 'voice';
+    if (!isKodikWatchPlayer()) {
+        currentKodikTranslationIdx = i;
+        setServer(kodikIdx);
+    } else if (currentKodikTranslationIdx !== i) {
+        selectVoice(i);
+    } else {
+        refreshPlayerChrome(true);
+    }
+}
+
+function updateVoiceSidebarVisibility() {
+    const sidebar = document.getElementById('player-sidebar');
+    const layout = document.querySelector('.watch-player-layout');
+    const show = shouldShowVoiceSidebar();
+    if (sidebar) sidebar.classList.toggle('hidden', !show);
+    if (layout) layout.classList.toggle('watch-player-layout--no-sidebar', !show);
+}
+
+function refreshPlayerModalChrome(scrollActiveVoice = false) {
+    updateVoiceSidebarVisibility();
+    const sidebar = document.getElementById('player-sidebar');
+    if (sidebar && shouldShowVoiceSidebar()) sidebar.innerHTML = buildPlayerVoiceSidebarInner();
+    if (scrollActiveVoice) {
+        requestAnimationFrame(() => {
+            document.querySelector('.voice-sidebar-item--active')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        });
+    }
+}
+
+function refreshPlayerChrome(scrollActiveVoice = false) {
+    const toolbar = document.getElementById('player-toolbar');
+    if (toolbar) toolbar.innerHTML = buildPlayerToolbarInner();
+    const sidebar = document.getElementById('player-sidebar');
+    if (sidebar) sidebar.innerHTML = buildWatchSidebarInner();
+    lucide.createIcons();
+    scrollActiveEpisodeIntoView();
+    requestAnimationFrame(() => {
+        const p = document.querySelector('.watch-sidebar-panel');
+        if (p) updateSidebarScrollProgress(p);
+    });
+    if (scrollActiveVoice) {
+        requestAnimationFrame(() => {
+            document.querySelector('.watch-sidebar-voice-item--active')
+                ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        });
+    }
+}
+
+function getPlayerEpisodeNums() {
+    if (currentKodikEpisodeNums.length) return currentKodikEpisodeNums;
+    const total = currentAnime?.episodes || 1;
+    return Array.from({ length: Math.max(1, total) }, (_, i) => i + 1);
+}
+
+function shouldShowPlayerPicker() {
+    return !!currentAnime && getActiveServers().length > 0;
+}
+
+function getPlayerPickerBtnLabel() {
+    const srv = getActiveServers()[currentServerIndex]?.name || '';
+    const ep = t('picker_current_ep', currentEpisodeNum);
+    return srv ? `${srv} · ${ep}` : ep;
+}
+
+function pickerItemClass(active, disabled = false) {
+    if (disabled) return 'player-picker-item player-picker-item--disabled';
+    return active ? 'player-picker-item player-picker-item--active' : 'player-picker-item';
+}
+
+function formatPickerQualityLabel(q) {
+    return q === '4K ✦' ? '4K' : q;
+}
+
+const PICKER_QUALITY_ORDER = ['4K ✦', '1080p ✦', '1080p', '720p', '480p'];
+
+
+function sortQualityKeys(keys) {
+    const set = new Set(keys);
+    return PICKER_QUALITY_ORDER.filter(q => set.has(q));
+}
+
+function getPickerActiveQuality() {
+    const playerType = getActiveServers()[currentServerIndex]?.type;
+    if (playerType === 'libria') return libriaCurrentQuality;
+    if (playerType === 'kodik') return kodikCurrentQuality;
+    if (Object.keys(libriaQualityMap).length) return libriaCurrentQuality;
+    return '';
+}
+
+function isPicker4KLocked() {
+    return getPickerActiveQuality() === '4K ✦';
+}
+
+function isAnilibriaTranslation(tr) {
+    const title = (tr?.title || '').toLowerCase();
+    return title.includes('anilibria') || title.includes('анилибрия');
+}
+
+function getKodikVoicesForCurrentPlayer() {
+    if (!isKodikWatchPlayer()) return [];
+    return currentKodikTranslations.map((tr, i) => ({ tr, i }));
+}
+
+function ensureKodikTranslationForPlayer() {
+    const allowed = getKodikVoicesForCurrentPlayer();
+    if (!allowed.length) return;
+    if (!allowed.some(v => v.i === currentKodikTranslationIdx)) {
+        currentKodikTranslationIdx = allowed[0].i;
+    }
+}
+
+function sortPickerActiveFirst(items, isDisabled, isActive) {
+    return [...items].sort((a, b) => {
+        const ad = isDisabled(a) ? 1 : 0;
+        const bd = isDisabled(b) ? 1 : 0;
+        if (ad !== bd) return ad - bd;
+        const aa = isActive(a) ? 0 : 1;
+        const ba = isActive(b) ? 0 : 1;
+        return aa - ba;
+    });
+}
+
+function getPickerVoiceEntries() {
+    if (isHentaiAnime(currentAnime)) return [];
+
+    const playerType = getActiveServers()[currentServerIndex]?.type;
+    const entries = [];
+
+    entries.push({
+        label: t('voice_anilibria'),
+        kind: 'libria',
+        active: playerType === 'libria',
+        disabled: playerType !== 'libria',
+    });
+
+    currentKodikTranslations.forEach((tr, i) => {
+        entries.push({
+            label: tr.title,
+            kind: 'kodik',
+            idx: i,
+            active: playerType === 'kodik' && i === currentKodikTranslationIdx,
+            disabled: playerType !== 'kodik',
+        });
+    });
+
+    const subIdx = getActiveServers().findIndex(s => s.type === 'iframe' && String(s.url?.('', 1) || '').includes('/sub'));
+    const dubIdx = getActiveServers().findIndex(s => s.type === 'iframe' && String(s.url?.('', 1) || '').includes('/dub'));
+
+    if (subIdx >= 0) {
+        entries.push({
+            label: t('voice_sub'),
+            kind: 'iframe',
+            serverIdx: subIdx,
+            active: currentServerIndex === subIdx,
+            disabled: currentServerIndex !== subIdx,
+        });
+    }
+    if (dubIdx >= 0) {
+        entries.push({
+            label: t('voice_dub'),
+            kind: 'iframe',
+            serverIdx: dubIdx,
+            active: currentServerIndex === dubIdx,
+            disabled: currentServerIndex !== dubIdx,
+        });
+    }
+
+    return sortPickerActiveFirst(entries, v => v.disabled, v => v.active);
+}
+
+function buildPickerVoiceItem(v) {
+    if (v.disabled) {
+        const cls = v.active
+            ? 'player-picker-item player-picker-item--active player-picker-item--fixed'
+            : pickerItemClass(false, true);
+        return `<button type="button" disabled class="${cls}">${escapeHtml(v.label)}</button>`;
+    }
+    if (v.kind === 'kodik') {
+        return `<button type="button" onclick="selectVoiceInPlayer(${v.idx})"
+            class="${pickerItemClass(v.active)}">${escapeHtml(v.label)}</button>`;
+    }
+    return `<button type="button" disabled
+        class="player-picker-item player-picker-item--active player-picker-item--fixed">${escapeHtml(v.label)}</button>`;
+}
+
+function getPickerQualityEntries() {
+    const playerType = getActiveServers()[currentServerIndex]?.type;
+    const hasLibria = Object.keys(libriaQualityMap).length > 0;
+    const hasKodik = Object.keys(kodikQualityMap).length > 0;
+    const order = PICKER_QUALITY_ORDER;
+
+    if (!hasLibria && !hasKodik) {
+        if (playerType === 'iframe') {
+            return order.map(q => ({ q, disabled: true, active: false, engine: null }));
+        }
+        return [];
+    }
+
+    const libriaHas = (q) => !!libriaQualityMap[q] || (q === '4K ✦' && hasLibria);
+    const kodikHas = (q) => !!kodikQualityMap[q];
+
+    return order.map(q => {
+        const lHas = libriaHas(q);
+        const kHas = kodikHas(q);
+        let disabled = false;
+        let active = false;
+        let engine = null;
+
+        if (playerType === 'libria') {
+            disabled = !lHas;
+            active = libriaCurrentQuality === q;
+            engine = lHas ? 'libria' : null;
+        } else if (playerType === 'kodik') {
+            disabled = !kHas;
+            active = kodikCurrentQuality === q;
+            engine = kHas ? 'kodik' : null;
+        } else {
+            disabled = !(lHas || kHas);
+            active = (libriaCurrentQuality === q && lHas) || (kodikCurrentQuality === q && kHas);
+            engine = lHas ? 'libria' : (kHas ? 'kodik' : null);
+        }
+
+        return { q, disabled, active, engine };
+    });
+}
+
+function buildPickerQualityItem(e) {
+    const label = escapeHtml(formatPickerQualityLabel(e.q));
+    const qAttr = escapeHtml(e.q);
+    if (e.disabled) {
+        return `<button type="button" disabled
+            class="${pickerItemClass(e.active, true)}">${label}</button>`;
+    }
+    return `<button type="button" data-quality="${qAttr}"
+        onclick="selectPickerQualityByKey(this.dataset.quality)"
+        class="${pickerItemClass(e.active)}">${label}</button>`;
+}
+
+function buildPickerQualityItems() {
+    const entries = getPickerQualityEntries();
+    return entries.map(buildPickerQualityItem).join('');
+}
+
+function selectPickerQualityByKey(q) {
+    const entry = getPickerQualityEntries().find(e => e.q === q);
+    if (!entry || entry.disabled || !entry.engine) return;
+
+    if (entry.engine === 'libria') {
+        if (getActiveServers()[currentServerIndex]?.type === 'libria') setLibriaQuality(q);
+        else switchToLibriaQuality(q);
+    } else if (entry.engine === 'kodik') {
+        const kodikIdx = getActiveServers().findIndex(s => s.type === 'kodik');
+        if (getActiveServers()[currentServerIndex]?.type !== 'kodik' && kodikIdx >= 0) {
+            window._pendingKodikQuality = q;
+            setServer(kodikIdx);
+        } else {
+            setKodikQuality(q);
+        }
+    }
+    refreshPlayerPickerInPlace(true);
+}
+
+function buildPlayerPickerHtml() {
+    if (!shouldShowPlayerPicker()) return '';
+
+    const epNums = getPlayerEpisodeNums();
+    const showEpisodes = epNums.length > 1;
+    const voiceEntries = getPickerVoiceEntries();
+    const qualityEntries = getPickerQualityEntries();
+    const showQuality = qualityEntries.length > 0;
+
+    const locked4K = isPicker4KLocked();
+
+    const serverItems = getActiveServers().map((s, i) => {
+        const disabled = locked4K && s.type !== 'libria';
+        const active = i === currentServerIndex;
+        return `
+        <button type="button"${disabled ? ' disabled' : ` onclick="selectServerInPlayer(${i})"`}
+            class="${pickerItemClass(active, disabled)}">
+            ${escapeHtml(s.name)}
+        </button>`;
+    }).join('');
+
+    const voiceItems = voiceEntries.map(buildPickerVoiceItem).join('');
+
+    const epItems = showEpisodes ? epNums.map(n => `
+        <button type="button" onclick="selectEpisodeInPlayer(${n})"
+            class="${pickerItemClass(n === currentEpisodeNum)}">
+            ${t('episode_select', n)}
+        </button>`).join('') : '';
+
+    const sections = [];
+    const pushPickerSection = (title, listHtml, extraListClass = '', listId = '', blockClass = '') => {
+        if (!listHtml) return;
+        sections.push(`
+        <div class="player-picker-block${blockClass}">
+            <p class="player-picker-section-title px-1 mb-1 shrink-0">${title}</p>
+            <div class="player-picker-list${extraListClass}"${listId ? ` id="${listId}"` : ''}>${listHtml}</div>
+        </div>`);
+    };
+
+    // 1. Серии → 2. Качество → 3. Плеер
+    if (showEpisodes) {
+        pushPickerSection(t('episodes_panel'), epItems, ' player-picker-ep-list', 'ep-list');
+    }
+    if (showQuality) {
+        pushPickerSection(t('quality_panel'), qualityEntries.map(buildPickerQualityItem).join(''));
+    }
+    pushPickerSection(t('server_panel'), serverItems);
+
+    // Озвучка — только для текущего плеера
+    if (voiceEntries.length) {
+        pushPickerSection(t('voice_panel'), voiceItems, '', '', ' player-picker-block--voice');
+    }
+
+    return `
+    <div id="player-picker-root">
+        <button type="button" id="player-picker-btn" title="${t('picker_menu_title')}">
+            <i data-lucide="sliders-horizontal" class="w-3 h-3 shrink-0 text-airbnb"></i>
+            <span id="player-picker-label" class="truncate">${escapeHtml(getPlayerPickerBtnLabel())}</span>
+            <i data-lucide="chevron-down" class="w-2.5 h-2.5 shrink-0 text-white/45"></i>
+        </button>
+        <div id="ep-panel" class="ep-panel--closed player-picker-popover"
+             onwheel="event.stopPropagation()">
+            <div class="player-picker-shell">
+                <div class="player-picker-header flex items-center justify-between px-2.5 py-1.5 shrink-0">
+                    <span class="text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-airbnb shrink-0"></span>
+                        ${t('picker_menu_title')}
+                    </span>
+                    <button type="button" id="player-picker-close" class="text-white/40 hover:text-airbnb p-0.5 transition-colors rounded-md hover:bg-white/5">
+                        <i data-lucide="x" class="w-3 h-3"></i>
+                    </button>
+                </div>
+                <div class="player-picker-scroll px-2 py-1.5">
+                    ${sections.join('')}
+                </div>
+            </div>
+        </div>
+    </div>`;
+}
+
+function onWatchControlsClick(e) {
+    // In-player пикер (серии / качество / плеер / озвучка)
+    if (e.target.closest('#player-picker-close')) { closeEpPanel(); return; }
+    if (e.target.closest('#player-picker-btn')) { toggleEpPanel(); return; }
+
+    const layoutBtn = e.target.closest('[data-watch-layout]');
+    if (layoutBtn) {
+        setWatchPlayerLayout(layoutBtn.dataset.watchLayout);
+        return;
+    }
+    const watchPlayerBtn = e.target.closest('[data-watch-player]');
+    if (watchPlayerBtn) {
+        selectWatchPlayer(watchPlayerBtn.dataset.watchPlayer);
+        return;
+    }
+    const sidebarTabBtn = e.target.closest('[data-sidebar-tab]');
+    if (sidebarTabBtn) {
+        setWatchSidebarTab(sidebarTabBtn.dataset.sidebarTab);
+        return;
+    }
+    const srcBtn = e.target.closest('[data-server-idx]');
+    if (srcBtn && !srcBtn.disabled) {
+        selectServerInPlayer(Number(srcBtn.dataset.serverIdx));
+        return;
+    }
+    const voicePlayerBtn = e.target.closest('[data-voice-player]');
+    if (voicePlayerBtn) {
+        selectVoicePlayer(voicePlayerBtn.dataset.voicePlayer);
+        return;
+    }
+    const voiceBtn = e.target.closest('[data-voice-idx]');
+    if (voiceBtn) {
+        selectSidebarKodikVoice(Number(voiceBtn.dataset.voiceIdx));
+        return;
+    }
+    const seasonBtn = e.target.closest('[data-season-idx]');
+    if (seasonBtn) {
+        selectPlayerSeason(Number(seasonBtn.dataset.seasonIdx));
+        return;
+    }
+    const expandBtn = e.target.closest('[data-ep-expand]');
+    if (expandBtn) {
+        togglePlayerEpisodesExpanded();
+        return;
+    }
+    const epBtn = e.target.closest('[data-ep-num]');
+    if (epBtn) {
+        const seasonId = epBtn.dataset.epSeason || null;
+        selectEpisodeInPlayer(Number(epBtn.dataset.epNum), seasonId);
+    }
+}
+
+function bindPlayerPickerEvents() {
+    const watch = document.getElementById('watch-section');
+    if (watch && watch.dataset.pickerBound !== '1') {
+        watch.dataset.pickerBound = '1';
+        watch.addEventListener('click', onWatchControlsClick);
+    }
+}
+
+function bindPlayerModalEvents() {
+    const modal = document.getElementById('player-modal');
+    if (!modal || modal.dataset.modalBound === '1') return;
+    modal.dataset.modalBound = '1';
+    modal.addEventListener('click', onWatchControlsClick);
+    modal.querySelector('.watch-player-main')?.addEventListener('click', () => {
+        const active = document.activeElement;
+        if (active?.id === 'voice-sidebar-search') active.blur();
+    });
+}
+
+function refreshPlayerPickerInPlace(scrollActive = false) {
+    refreshPlayerChrome(scrollActive);
+    // Перерисовываем in-player пикер (серии/озвучки/качество подгружаются асинхронно)
+    const root = document.getElementById('player-picker-root');
+    if (!root) return;
+    const wasOpen = document.getElementById('ep-panel')?.classList.contains('ep-panel--open');
+    const html = buildPlayerPickerHtml();
+    if (!html) { root.remove(); return; }
+    root.outerHTML = html;
+    lucide.createIcons();
+    if (wasOpen) {
+        const panel = document.getElementById('ep-panel');
+        panel?.classList.remove('ep-panel--closed');
+        panel?.classList.add('ep-panel--open');
+        document.getElementById('player-picker-btn')?.classList.add('is-open');
+    }
+}
+
+function closeEpPanel() {
+    const panel = document.getElementById('ep-panel');
+    const btn = document.getElementById('player-picker-btn');
+    panel?.classList.add('ep-panel--closed');
+    panel?.classList.remove('ep-panel--open');
+    btn?.classList.remove('is-open');
+}
+
+function toggleEpPanel() {
+    const panel = document.getElementById('ep-panel');
+    const btn = document.getElementById('player-picker-btn');
+    if (!panel) return;
+    const opening = panel.classList.contains('ep-panel--closed');
+    document.getElementById('kodik-quality-panel')?.classList.add('hidden');
+    document.getElementById('libria-quality-panel')?.classList.add('hidden');
+    if (opening) {
+        panel.classList.remove('ep-panel--closed');
+        panel.classList.add('ep-panel--open');
+        btn?.classList.add('is-open');
+    } else {
+        panel.classList.add('ep-panel--closed');
+        panel.classList.remove('ep-panel--open');
+        btn?.classList.remove('is-open');
+    }
+    if (opening) {
+        lucide.createIcons();
+        requestAnimationFrame(() => {
+            document.querySelector('#ep-list .player-picker-item--active')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            document.querySelector('.player-picker-block--voice .player-picker-item--active')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        });
+    }
+}
+
+function selectEpisodeInPlayer(num, seasonId = null) {
+    selectEpisode(num, seasonId);
+}
+
+function selectVoiceInPlayer(idx) {
+    selectSidebarKodikVoice(idx);
+}
+
+function selectLibriaQualityInPlayer(idx) {
+    const keys = Object.keys(libriaQualityMap);
+    const q = keys[idx];
+    if (!q) return;
+    if (getActiveServers()[currentServerIndex]?.type === 'libria') setLibriaQuality(q);
+    else switchToLibriaQuality(q);
+    refreshPlayerPickerInPlace(true);
+}
+
+function selectKodikQualityInPlayer(idx) {
+    const keys = Object.keys(kodikQualityMap);
+    const q = keys[idx];
+    if (!q) return;
+    closeEpPanel();
+    const kodikIdx = getActiveServers().findIndex(s => s.type === 'kodik');
+    if (getActiveServers()[currentServerIndex]?.type !== 'kodik' && kodikIdx >= 0) {
+        window._pendingKodikQuality = q;
+        setServer(kodikIdx);
+        return;
+    }
+    setKodikQuality(q);
+}
+
+function selectServerInPlayer(idx) {
+    if (idx === currentServerIndex) return;
+    setServer(idx);
+    refreshPlayerPickerInPlace(true);
+}
+
+// ─── Shared player utilities ─────────────────────────────────────────────────
+
+function fmtPlayerTime(s) {
+    if (!isFinite(s) || s < 0) return '0:00';
+    return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+}
+
+function getPlayerVideo(prefix) {
+    return document.getElementById(prefix === 'kodik' ? 'kodik-video' : 'libria-video');
+}
+
+function clampSeekTime(videoEl, time) {
+    if (!videoEl || !isFinite(time)) return 0;
+    let t = Math.max(0, time);
+    if (videoEl.duration && isFinite(videoEl.duration)) {
+        t = Math.min(t, Math.max(0, videoEl.duration - 0.05));
+    }
+    if (videoEl.seekable && videoEl.seekable.length > 0) {
+        try {
+            const end = videoEl.seekable.end(videoEl.seekable.length - 1);
+            const start = videoEl.seekable.start(0);
+            t = Math.max(start, Math.min(end - 0.05, t));
+        } catch (_) {}
+    }
+    return t;
+}
+
+function setSeekVisualPct(prefix, pct) {
+    const p = Math.max(0, Math.min(100, pct));
+    const prog = document.getElementById(`${prefix}-prog-bar`);
+    const thumb = document.getElementById(`${prefix}-seek-thumb`);
+    if (prog) prog.style.width = p + '%';
+    if (thumb) {
+        thumb.style.left = p + '%';
+        thumb.style.opacity = '1';
+    }
+    const videoEl = getPlayerVideo(prefix);
+    if (videoEl?.duration) updateSeekVisual(prefix, videoEl);
+}
+
+function seekVideoTo(prefix, videoEl, time) {
+    if (!videoEl) return;
+    videoEl.pause();
+    if (!videoEl.duration || !isFinite(videoEl.duration)) return;
+
+    const t = clampSeekTime(videoEl, time);
+    if (Math.abs((videoEl.currentTime || 0) - t) > 0.02) {
+        videoEl.currentTime = t;
+    }
+    setSeekVisualPct(prefix, (t / videoEl.duration) * 100);
+    updateStartWatchTime(prefix, videoEl);
+    if (prefix === 'kodik') {
+        const timeEl = document.getElementById('kodik-time');
+        if (timeEl) timeEl.textContent = `${fmtPlayerTime(t)} / ${fmtPlayerTime(videoEl.duration)}`;
+    } else {
+        const timeEl = document.getElementById('libria-time');
+        if (timeEl) timeEl.textContent = `${fmtPlayerTime(t)} / ${fmtPlayerTime(videoEl.duration)}`;
+    }
+}
+
+function seekVideoByDelta(prefix, videoEl, delta) {
+    if (!videoEl) return;
+    const base = videoEl.currentTime || 0;
+    seekVideoTo(prefix, videoEl, base + delta);
+    if (!playerPlaybackStarted[prefix]) showStartWatchOverlay(prefix);
+    else if (_wasPlayingBeforeSeek[prefix] === undefined) {
+        _wasPlayingBeforeSeek[prefix] = !videoEl.paused;
+    }
+}
+
+function updateStartWatchTime(prefix, videoEl) {
+    const el = document.getElementById(`${prefix}-start-time`);
+    if (!el || !videoEl) return;
+    const cur = fmtPlayerTime(videoEl.currentTime);
+    const dur = videoEl.duration && isFinite(videoEl.duration) ? fmtPlayerTime(videoEl.duration) : '';
+    el.textContent = dur ? `${cur} / ${dur}` : cur;
+}
+
+function showStartWatchOverlay(prefix) {
+    const overlay = document.getElementById(`${prefix}-start-overlay`);
+    const videoEl = getPlayerVideo(prefix);
+    if (overlay) overlay.classList.remove('hidden');
+    if (videoEl) {
+        videoEl.pause();
+        updateStartWatchTime(prefix, videoEl);
+    }
+    lucide.createIcons();
+}
+
+function hideStartWatchOverlay(prefix) {
+    document.getElementById(`${prefix}-start-overlay`)?.classList.add('hidden');
+}
+
+function startPlayerPlayback(prefix) {
+    const videoEl = getPlayerVideo(prefix);
+    if (!videoEl) return;
+    playerPlaybackStarted[prefix] = true;
+    hideStartWatchOverlay(prefix);
+    videoEl.play().catch(() => {
+        playerPlaybackStarted[prefix] = false;
+        showStartWatchOverlay(prefix);
+    });
+    showPlayerControls(prefix);
+    lucide.createIcons();
+}
+
+// Drag-seek: мгновенный переход к кадру, до старта — пауза + оверлей «Начать просмотр»
+function initSeekDrag(trackId, videoEl, prefix) {
+    const track = document.getElementById(trackId);
+    if (!track || track.dataset.seekInit) return;
+    track.dataset.seekInit = '1';
+
+    const getPos = (e) => {
+        const rect = track.getBoundingClientRect();
+        if (!rect.width) return 0;
+        const x = (e.touches?.[0]?.clientX ?? e.clientX) - rect.left;
+        return Math.max(0, Math.min(1, x / rect.width));
+    };
+
+    let dragging = false;
+
+    const onDown = (e) => {
+        e.preventDefault();
+        dragging = true;
+        _seekDragging[prefix] = true;
+        _wasPlayingBeforeSeek[prefix] = !videoEl.paused;
+        videoEl.pause();
+
+        const pct = getPos(e);
+        setSeekVisualPct(prefix, pct * 100);
+
+        if (videoEl.duration && isFinite(videoEl.duration)) {
+            seekVideoTo(prefix, videoEl, pct * videoEl.duration);
+        } else {
+            _pendingSeekPct[prefix] = pct;
+        }
+    };
+
+    const onMove = (e) => {
+        if (!dragging) return;
+        e.preventDefault();
+        const pct = getPos(e);
+        setSeekVisualPct(prefix, pct * 100);
+        if (videoEl.duration && isFinite(videoEl.duration)) {
+            seekVideoTo(prefix, videoEl, pct * videoEl.duration);
+        } else {
+            _pendingSeekPct[prefix] = pct;
+        }
+    };
+
+    const onUp = () => {
+        if (!dragging) return;
+        dragging = false;
+        _seekDragging[prefix] = false;
+
+        if (!playerPlaybackStarted[prefix]) {
+            showStartWatchOverlay(prefix);
+        } else if (_wasPlayingBeforeSeek[prefix]) {
+            videoEl.play().catch(() => {});
+        }
+    };
+
+    track.addEventListener('mousedown', onDown);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    track.addEventListener('touchstart', onDown, { passive: false });
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onUp);
+}
+
+// Обновить визуал seek (прогресс + буфер + загрузка)
+function getVideoBufferEnd(videoEl) {
+    let end = 0;
+    if (!videoEl?.buffered) return 0;
+    for (let i = 0; i < videoEl.buffered.length; i++) {
+        try { end = Math.max(end, videoEl.buffered.end(i)); } catch (_) {}
+    }
+    return end;
+}
+
+function formatBufferSpeed(bps) {
+    if (!bps || !isFinite(bps)) return '';
+    if (bps >= 1e6) return `${(bps / 1e6).toFixed(1)} MB/s`;
+    if (bps >= 1e3) return `${Math.round(bps / 1e3)} KB/s`;
+    return `${Math.round(bps)} B/s`;
+}
+
+function recordBufferSpeed(prefix, bytesLoaded, loadDurationMs) {
+    const st = playerBufferState[prefix];
+    if (!st || !bytesLoaded || !loadDurationMs) return;
+    const instant = (bytesLoaded * 1000) / Math.max(loadDurationMs, 1);
+    st.speedBps = st.speedBps ? st.speedBps * 0.65 + instant * 0.35 : instant;
+}
+
+function setPlayerBuffering(prefix, on) {
+    const st = playerBufferState[prefix];
+    if (!st) return;
+    st.buffering = on;
+    const videoEl = getPlayerVideo(prefix);
+    syncPlayerPlayBtn(prefix);
+    if (videoEl) updateSeekVisual(prefix, videoEl);
+}
+
+function bindVideoBufferEvents(videoEl, prefix) {
+    if (!videoEl || videoEl.dataset.bufferBound) return;
+    videoEl.dataset.bufferBound = '1';
+
+    const refresh = () => updateSeekVisual(prefix, videoEl);
+    videoEl.addEventListener('progress', refresh);
+    videoEl.addEventListener('loadedmetadata', refresh);
+    videoEl.addEventListener('durationchange', refresh);
+    videoEl.addEventListener('seeked', refresh);
+    videoEl.addEventListener('waiting', () => setPlayerBuffering(prefix, true));
+    videoEl.addEventListener('playing', () => setPlayerBuffering(prefix, false));
+    videoEl.addEventListener('canplay', refresh);
+    videoEl.addEventListener('canplaythrough', () => setPlayerBuffering(prefix, false));
+    videoEl.addEventListener('stalled', () => setPlayerBuffering(prefix, true));
+    videoEl.addEventListener('pause', () => syncPlayerPlayBtn(prefix));
+}
+
+function bindHlsBufferEvents(hls, prefix, videoEl) {
+    if (!hls) return;
+    hls.on(Hls.Events.FRAG_LOADED, (_, data) => {
+        const stats = data?.frag?.stats;
+        if (stats?.loaded && stats.loading?.end && stats.loading?.start) {
+            recordBufferSpeed(prefix, stats.loaded, stats.loading.end - stats.loading.start);
+        }
+        updateSeekVisual(prefix, videoEl);
+    });
+    hls.on(Hls.Events.BUFFER_APPENDED, () => updateSeekVisual(prefix, videoEl));
+    hls.on(Hls.Events.LEVEL_LOADED, () => updateSeekVisual(prefix, videoEl));
+    hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data?.details === 'bufferStalledError' || data?.details === 'bufferAppendError') {
+            setPlayerBuffering(prefix, true);
+        }
+    });
+}
+
+function updateBufferStatusLabel(prefix, videoEl, { isBuffering }) {
+    syncPlayerPlayBtn(prefix);
+}
+
+function updateSeekVisual(prefix, videoEl) {
+    const prog  = document.getElementById(`${prefix}-prog-bar`);
+    const buf   = document.getElementById(`${prefix}-buf-bar`);
+    const load  = document.getElementById(`${prefix}-load-bar`);
+    const thumb = document.getElementById(`${prefix}-seek-thumb`);
+    if (!videoEl || !prog) return;
+
+    const dur = videoEl.duration;
+    if (!dur || !isFinite(dur)) return;
+
+    const cur = videoEl.currentTime || 0;
+    const playPct = (cur / dur) * 100;
+    const bufEnd = getVideoBufferEnd(videoEl);
+    const bufPct = (bufEnd / dur) * 100;
+    const aheadSec = Math.max(0, bufEnd - cur);
+    const aheadPct = (aheadSec / dur) * 100;
+
+    if (!_seekDragging[prefix]) {
+        prog.style.width = playPct + '%';
+        if (thumb) thumb.style.left = playPct + '%';
+    }
+    if (buf) buf.style.width = bufPct + '%';
+
+    const st = playerBufferState[prefix];
+    const isBuffering = !!(st?.buffering && !videoEl.paused && playerPlaybackStarted[prefix]);
+
+    if (load) {
+        const showLoad = isBuffering || aheadSec < 10;
+        if (showLoad && (aheadPct > 0.3 || isBuffering)) {
+            load.classList.add('is-active');
+            load.style.left = playPct + '%';
+            load.style.width = Math.max(isBuffering ? 4 : 0.5, aheadPct) + '%';
+            load.classList.toggle('is-slow', (st?.speedBps || 0) > 0 && st.speedBps < 350000);
+            load.classList.toggle('is-fast', (st?.speedBps || 0) >= 1500000);
+        } else {
+            load.classList.remove('is-active', 'is-slow', 'is-fast');
+            load.style.width = '0%';
+        }
+    }
+
+    updateBufferStatusLabel(prefix, videoEl, { playPct, bufPct, aheadSec, isBuffering });
+}
+
+// Auto-hide controls
+function showPlayerControls(player) {
+    const id = player === 'kodik' ? 'kodik-controls' : 'libria-controls';
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.remove('hidden');
+    el.style.opacity = '1';
+    const videoId = player === 'kodik' ? 'kodik-video' : 'libria-video';
+    const video = document.getElementById(videoId);
+    if (player === 'kodik') { clearTimeout(kodikControlsTimer); }
+    else { clearTimeout(libriaControlsTimer); }
+    if (video && !video.paused) {
+        const timer = setTimeout(() => {
+            if (playerBufferState[player]?.buffering) return;
+            el.style.opacity = '0';
+            setTimeout(() => { if (el.style.opacity === '0') el.classList.add('hidden'); }, 320);
+        }, 3000);
+        if (player === 'kodik') kodikControlsTimer = timer;
+        else libriaControlsTimer = timer;
+    }
+}
+
+function scheduleHideControls(player) {
+    const videoId = player === 'kodik' ? 'kodik-video' : 'libria-video';
+    const video = document.getElementById(videoId);
+    if (!video || video.paused || playerBufferState[player]?.buffering) return;
+    const timer = setTimeout(() => {
+        const id = player === 'kodik' ? 'kodik-controls' : 'libria-controls';
+        const el = document.getElementById(id);
+        if (el) { el.style.opacity = '0'; setTimeout(() => el.classList.add('hidden'), 320); }
+    }, 800);
+    if (player === 'kodik') { clearTimeout(kodikControlsTimer); kodikControlsTimer = timer; }
+    else { clearTimeout(libriaControlsTimer); libriaControlsTimer = timer; }
+}
+
+// ─── Quality panel ────────────────────────────────────────────────────────────
+
+function _qualityBtn(label, onclick, active, badge) {
+    return `<button onclick="${onclick}"
+        class="w-full flex items-center gap-2 px-3 py-2 text-sm font-semibold transition-colors text-left
+        ${active ? 'text-airbnb bg-airbnb/10' : 'text-white hover:bg-white/10'}">
+        ${active ? '<span class="w-1.5 h-1.5 rounded-full bg-airbnb shrink-0"></span>' : '<span class="w-1.5 h-1.5 shrink-0"></span>'}
+        <span class="min-w-0 break-words leading-snug">${escapeHtml(label)}</span>
+        ${badge ? `<span class="ml-auto shrink-0 text-[9px] font-bold px-1 rounded ${badge === '4K' ? 'text-airbnb bg-airbnb/20' : badge === 'GL' ? 'text-purple-300 bg-purple-500/20' : 'text-white/50 bg-white/10'}">${badge}</span>` : ''}
+    </button>`;
+}
+
+function _qualitySectionHeader(label) {
+    return `<div class="px-3 pt-2 pb-0.5 text-[10px] font-bold uppercase tracking-widest text-white/40">${escapeHtml(label)}</div>`;
+}
+
+function renderQualityPanel(player) {
+    const listEl = document.getElementById(`${player}-quality-list`);
+    if (!listEl) return;
+
+    let html = '';
+
+    if (player === 'kodik') {
+        const kodikKeys = sortQualityKeys(Object.keys(kodikQualityMap));
+        if (kodikKeys.length) {
+            html += _qualitySectionHeader('Kodik · Качество');
+            html += kodikKeys.map(q =>
+                _qualityBtn(q, `setKodikQuality('${q.replace(/'/g, "\\'")}')`, q === kodikCurrentQuality, q === '1080p ✦' ? 'GL' : null)
+            ).join('');
+        }
+
+        const libriaKeys = sortQualityKeys(Object.keys(libriaQualityMap));
+        if (libriaKeys.length) {
+            html += `<div class="border-t border-white/10 mt-1"></div>`;
+            html += _qualitySectionHeader('AniLibria · 4K');
+            html += libriaKeys.map(q => {
+                const is4k = q === '4K ✦';
+                return _qualityBtn(q, `switchToLibriaQuality('${q}')`, false, is4k ? 'GL' : '4K');
+            }).join('');
+        }
+
+    } else {
+        const libriaKeys = sortQualityKeys(Object.keys(libriaQualityMap));
+        if (libriaKeys.length) {
+            html += libriaKeys.map(q => {
+                const is4k = q === '4K ✦';
+                return _qualityBtn(q, `setLibriaQuality('${q}')`, q === libriaCurrentQuality, is4k ? 'GL' : null);
+            }).join('');
+        }
+    }
+
+    if (!html) {
+        document.getElementById(`${player}-quality-btn`)?.classList.add('hidden');
+        return;
+    }
+    listEl.innerHTML = html;
+}
+
+function toggleQualityPanel(player) {
+    const other = player === 'kodik' ? 'libria' : 'kodik';
+    document.getElementById(`${other}-quality-panel`)?.classList.add('hidden');
+    const panel = document.getElementById(`${player}-quality-panel`);
+    if (!panel) return;
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) {
+        renderQualityPanel(player);
+        requestAnimationFrame(() => {
+            const listEl = document.getElementById(`${player}-quality-list`);
+            listEl?.querySelector('button.text-airbnb')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        });
+    }
+}
+
+function closeQualityPanel(player) {
+    document.getElementById(`${player}-quality-panel`)?.classList.add('hidden');
+}
+
+function updateQualityLabel(player, q) {
+    const el = document.getElementById(`${player}-quality-label`);
+    if (el) el.textContent = q;
+}
+
+// Клик вне панели закрывает её
+document.addEventListener('click', (e) => {
+    ['kodik', 'libria'].forEach(p => {
+        const panel = document.getElementById(`${p}-quality-panel`);
+        const btn   = document.getElementById(`${p}-quality-btn`);
+        if (panel && !panel.contains(e.target) && e.target !== btn && !btn?.contains(e.target)) {
+            panel.classList.add('hidden');
+        }
+        const fitPanel = document.getElementById(`${p}-fit-panel`);
+        const fitBtn   = document.getElementById(`${p}-fit-btn`);
+        if (fitPanel && !fitPanel.contains(e.target) && e.target !== fitBtn && !fitBtn?.contains(e.target)) {
+            fitPanel.classList.add('hidden');
+        }
+    });
+    if (window._pickerToggleLock) return;
+    const epPanel = document.getElementById('ep-panel');
+    const pickerRoot = document.getElementById('player-picker-root');
+    if (epPanel && !epPanel.classList.contains('ep-panel--closed')
+        && pickerRoot && !pickerRoot.contains(e.target)) {
+        closeEpPanel();
+    }
+});
+
+// ─── Cross-engine quality switching ──────────────────────────────────────────
+
+async function switchToLibriaQuality(q) {
+    closeQualityPanel('kodik');
+    closeQualityPanel('libria');
+    const libraIdx = getActiveServers().findIndex(s => s.type === 'libria');
+    if (libraIdx < 0) return;
+
+    if (getActiveServers()[currentServerIndex]?.type === 'libria') {
+        // Already on AniLibria — just switch quality
+        setLibriaQuality(q);
+        return;
+    }
+
+    // Switching from Kodik → AniLibria
+    stopLibriaGL();
+    if (kodikHls) { kodikHls.destroy(); kodikHls = null; }
+    currentServerIndex = libraIdx;
+
+    if (Object.keys(libriaQualityMap).length) {
+        // Map already prefetched — no need to re-fetch
+        libriaCurrentQuality = q;
+        libriaUpscale4K = (q === '4K ✦');
+        const viewport = document.getElementById('player-viewport');
+        if (viewport) {
+            viewport.innerHTML = renderCurrentPlayer();
+            lucide.createIcons();
+            bindPlayerPickerEvents();
+        }
+        const url = libriaQualityMap[q];
+        if (url) loadLibriaVideo(url);
+    } else {
+        // Need full init
+        window._pendingLibriaQuality = q;
+        const viewport = document.getElementById('player-viewport');
+        if (viewport) {
+            viewport.innerHTML = renderCurrentPlayer();
+            lucide.createIcons();
+            bindPlayerPickerEvents();
+        }
+        initLibriaPlayer();
+    }
+    refreshPlayerPickerInPlace();
+}
+
+function switchToKodikVoice(idx) {
+    closeQualityPanel('kodik');
+    closeQualityPanel('libria');
+    const kodikIdx = getActiveServers().findIndex(s => s.type === 'kodik');
+    if (kodikIdx < 0) return;
+
+    if (getActiveServers()[currentServerIndex]?.type === 'kodik') {
+        selectVoice(idx);
+        return;
+    }
+
+    // Switching from AniLibria → Kodik
+    stopLibriaGL();
+    if (libriaHls) { libriaHls.destroy(); libriaHls = null; }
+    currentServerIndex = kodikIdx;
+    currentKodikTranslationIdx = idx;
+    const viewport = document.getElementById('player-viewport');
+    if (viewport) {
+        viewport.innerHTML = renderCurrentPlayer();
+        lucide.createIcons();
+        bindPlayerPickerEvents();
+    }
+    initKodikPlayer();
+    refreshPlayerPickerInPlace();
+}
+
+// ─── Kodik quality switch ─────────────────────────────────────────────────────
+
+// Включить/выключить WebGL-апскейл в Kodik (тот же шейдер, что в AniLibria 4K)
+function applyKodikUpscale() {
+    const videoEl  = document.getElementById('kodik-video');
+    const canvasEl = document.getElementById('kodik-canvas');
+    if (!videoEl || !canvasEl) return;
+    if (kodikUpscaleHD) {
+        canvasEl.classList.remove('hidden');
+        videoEl.style.opacity = '0';
+        videoEl.style.pointerEvents = 'none';
+        canvasEl.onclick = (e) => {
+            if (e.pointerType === 'touch') return;
+            if (_seekDragging.kodik) return;
+            if (!playerPlaybackStarted.kodik) { showStartWatchOverlay('kodik'); return; }
+            toggleKodikPlay();
+        };
+        initWebGLUpscaler(canvasEl, videoEl);
+    } else {
+        stopLibriaGL();
+        canvasEl.classList.add('hidden');
+        videoEl.style.opacity = '';
+        videoEl.style.pointerEvents = '';
+    }
+}
+
+function setKodikQuality(q) {
+    const url = kodikQualityMap[q];
+    if (!url) { closeQualityPanel('kodik'); return; }
+    const videoEl = document.getElementById('kodik-video');
+    if (!videoEl) return;
+
+    const wantUpscale = (q === '1080p ✦');
+    const prevUrl = kodikQualityMap[kodikCurrentQuality];
+    kodikCurrentQuality = q;
+    updateQualityLabel('kodik', q);
+    closeQualityPanel('kodik');
+    renderQualityPanel('kodik');
+
+    // Тот же поток (720p ↔ 1080p ✦) — просто переключаем апскейл без перезагрузки
+    if (url === prevUrl) {
+        kodikUpscaleHD = wantUpscale;
+        applyKodikUpscale();
+        refreshPlayerPickerInPlace();
+        if (currentAnime) saveWatchProgress(currentAnime);
+        return;
+    }
+
+    const savedTime = videoEl.currentTime;
+    const wasPaused = videoEl.paused;
+    kodikUpscaleHD = wantUpscale;
+    applyKodikUpscale();
+
+    if (kodikHls) { kodikHls.destroy(); kodikHls = null; }
+    const isM3u8 = !url.match(/\.(mp4|webm|ogg)(\?|$)/i);
+    if (isM3u8 && Hls.isSupported()) {
+        kodikHls = new Hls(HLS_FAST_OPTS);
+        kodikHls.loadSource(url);
+        kodikHls.attachMedia(videoEl);
+        kodikHls.once(Hls.Events.MANIFEST_PARSED, () => {
+            videoEl.currentTime = savedTime;
+            updateSeekVisual('kodik', videoEl);
+            if (!wasPaused) videoEl.play().catch(() => {});
+        });
+        kodikHls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) { kodikHls?.destroy(); kodikHls = null; } });
+        bindHlsBufferEvents(kodikHls, 'kodik', videoEl);
+    } else {
+        videoEl.src = url; videoEl.load();
+        videoEl.addEventListener('loadedmetadata', () => {
+            videoEl.currentTime = savedTime;
+            if (!wasPaused) videoEl.play().catch(() => {});
+        }, { once: true });
+    }
+    refreshPlayerPickerInPlace();
+    if (currentAnime) saveWatchProgress(currentAnime);
+}
+
+// ─── AniLibria quality switch (с 4K режимом) ─────────────────────────────────
+
+function setLibriaQuality(q) {
+    const url = libriaQualityMap[q];
+    if (!url || q === libriaCurrentQuality) { closeQualityPanel('libria'); return; }
+    const videoEl  = document.getElementById('libria-video');
+    const canvasEl = document.getElementById('libria-canvas');
+    if (!videoEl) return;
+    const savedTime = videoEl.currentTime;
+    const wasPaused = videoEl.paused;
+    libriaCurrentQuality = q;
+    libriaUpscale4K = (q === '4K ✦');
+    updateQualityLabel('libria', q);
+    closeQualityPanel('libria');
+    renderQualityPanel('libria');
+
+    if (libriaHls) { libriaHls.destroy(); libriaHls = null; }
+    stopLibriaGL();
+
+    const isM3u8 = !url.match(/\.(mp4|webm|ogg)(\?|$)/i);
+    if (isM3u8 && Hls.isSupported()) {
+        libriaHls = new Hls(HLS_FAST_OPTS);
+        libriaHls.loadSource(url);
+        libriaHls.attachMedia(videoEl);
+        libriaHls.once(Hls.Events.MANIFEST_PARSED, () => {
+            videoEl.currentTime = savedTime;
+            updateSeekVisual('libria', videoEl);
+            if (!wasPaused) videoEl.play().catch(() => {});
+        });
+        bindHlsBufferEvents(libriaHls, 'libria', videoEl);
+    } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+        videoEl.src = url; videoEl.load();
+        videoEl.addEventListener('loadedmetadata', () => {
+            videoEl.currentTime = savedTime;
+            if (!wasPaused) videoEl.play().catch(() => {});
+        }, { once: true });
+    }
+
+    if (canvasEl) _initLibriaGL(canvasEl, videoEl);
+    refreshPlayerPickerInPlace();
+    if (currentAnime) saveWatchProgress(currentAnime);
+}
+
 // ─── Libria player controls ───────────────────────────────────────────────────
 
 function toggleLibriaPlay() {
     const v = document.getElementById('libria-video');
     if (!v) return;
-    v.paused ? v.play().catch(() => {}) : v.pause();
+    if (!playerPlaybackStarted.libria) { startPlayerPlayback('libria'); return; }
+    if (v.paused) v.play().catch(() => {});
+    else v.pause();
 }
 
 function toggleLibriaMute() {
@@ -3672,22 +7672,18 @@ function toggleLibriaMute() {
 }
 
 function updateLibriaPlayBtn(isPaused) {
-    const btn = document.getElementById('libria-play-btn');
-    if (!btn) return;
-    btn.innerHTML = isPaused
-        ? '<i data-lucide="play" class="w-5 h-5"></i>'
-        : '<i data-lucide="pause" class="w-5 h-5"></i>';
-    lucide.createIcons();
+    updatePlayerPlayBtn('libria', isPaused ? 'paused' : 'playing');
 }
 
 function updateLibriaTime() {
     const v = document.getElementById('libria-video');
     const timeEl = document.getElementById('libria-time');
-    const seekEl = document.getElementById('libria-seek');
     if (!v || !timeEl) return;
     const fmt = s => isFinite(s) ? `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}` : '0:00';
     timeEl.textContent = `${fmt(v.currentTime)} / ${fmt(v.duration)}`;
-    if (seekEl && v.duration) seekEl.value = (v.currentTime / v.duration) * 100;
+    updateStartWatchTime('libria', v);
+    if (!_seekDragging.libria) updateSeekVisual('libria', v);
+    if (!v.paused && playerPlaybackStarted.libria) scheduleWatchProgressSave();
 }
 
 function setLibriaVolume(val) {
@@ -3873,8 +7869,7 @@ function openAdminModal() {
     if (!isAdminAuthenticated) return;
     const modal = document.getElementById('admin-panel-modal');
     if (!modal) return;
-    modal.classList.remove('hidden');
-    document.body.style.overflow = 'hidden';
+    openModalOverlay(modal);
     switchAdminTab('stats');
     renderAdminStats();
     const langInfo = document.getElementById('admin-lang-info');
@@ -3887,8 +7882,7 @@ function openAdminModal() {
 }
 
 function closeAdminModal() {
-    document.getElementById('admin-panel-modal')?.classList.add('hidden');
-    document.body.style.overflow = '';
+    closeModalOverlay(document.getElementById('admin-panel-modal'));
 }
 
 function switchAdminTab(tab) {
@@ -4014,6 +8008,9 @@ function getRouteInfo() {
     if (hash === 'profile') return { type: 'profile', username: null };
     const profileMatch = hash.match(/^profile\/(.+)$/);
     if (profileMatch) return { type: 'profile', username: decodeURIComponent(profileMatch[1]) };
+    const catMatch = hash.match(/^cat\/(ongoing|top|popular)$/);
+    if (catMatch) return { type: 'category', category: catMatch[1] };
+    if (hash === 'catalog') return { type: 'catalog' };
     return { type: 'home' };
 }
 
@@ -4022,21 +8019,20 @@ async function fetchAndWatchByMalId(malId) {
     if (existing) { await watchAnime(malId); return; }
 
     showSection('watch');
-    const container = document.getElementById('player-container');
-    if (container) container.innerHTML = `
-        <div class="flex flex-col items-center justify-center h-64 gap-4">
-            <div class="w-10 h-10 border-4 border-airbnb border-t-transparent rounded-full animate-spin"></div>
-            <p class="text-sm text-gray-500 dark:text-gray-400">${t('anime_loading')}</p>
-        </div>`;
+    showAnimeLoadingScreen('');
+    setLoadingProgress('anime', 8);
 
     try {
+        setLoadingProgress('anime', 25);
         const res = await fetch(`https://api.jikan.moe/v4/anime/${malId}`);
         const data = await res.json();
-        if (!data.data) { showSection('home'); clearAnimeUrl(); return; }
+        if (!data.data) { stopLoadingProgress('anime'); showSection('home'); clearAnimeUrl(); return; }
+        setLoadingProgress('anime', 40);
         const anime = normalizeAnimeItem(data.data);
         if (!animeData.find(a => a.id === anime.id)) animeData.push(anime);
         await watchAnime(malId);
     } catch (_) {
+        stopLoadingProgress('anime');
         showSection('home');
         clearAnimeUrl();
     }
@@ -4049,9 +8045,15 @@ window.addEventListener('popstate', () => {
         fetchAndWatchByMalId(info.malId);
     } else if (info.type === 'profile') {
         showProfilePage(info.username);
+    } else if (info.type === 'category') {
+        currentAnime = null;
+        renderCategoryView(info.category);
+    } else if (info.type === 'catalog') {
+        currentAnime = null;
+        openCatalog({ fromHistory: true });
     } else {
         currentAnime = null;
-        showSection('home');
+        goHome();
     }
 });
 
@@ -4063,6 +8065,16 @@ switchAuthMode('login');
 updateLangToggle();
 renderTranslations();
 setupInfiniteCatalogLoading();
+setupKeyboardShortcuts();
+
+document.addEventListener('click', (e) => {
+    if (!sortPanelOpen) return;
+    const panel = document.getElementById('sort-panel');
+    const btn = document.getElementById('sort-toggle-btn');
+    if (panel && !panel.contains(e.target) && e.target !== btn && !btn?.contains(e.target)) {
+        closeSortPanel();
+    }
+});
 
 // Проверяем URL при загрузке страницы
 (async () => {
@@ -4075,6 +8087,10 @@ setupInfiniteCatalogLoading();
         showSection('home');
         await new Promise(r => setTimeout(r, 50));
         showProfilePage(info.username);
+    } else if (info.type === 'category') {
+        renderCategoryView(info.category);
+    } else if (info.type === 'catalog') {
+        await openCatalog({ fromHistory: true });
     } else {
         showSection('home');
     }
