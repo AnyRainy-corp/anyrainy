@@ -91,12 +91,14 @@ const AUTH_STORAGE_KEY = 'anistream_users';
 const WATCH_HISTORY_KEY = 'anyrainy_watch_history';
 const MAX_WATCH_HISTORY = 12;
 
-// ─── Jikan: через серверный прокси локально, напрямую на GitHub Pages ──────────
+// ─── Бэкенд: localhost локально, VPS на GitHub Pages ───────────────────────────
+const BACKEND = needsKodikProxy() ? '' : 'https://v879022.hosted-by-vdsina.com';
+
 function jikanFetch(path, signal) {
-    if (needsKodikProxy()) {
-        return fetch('/jikan?path=' + encodeURIComponent(path), signal ? { signal } : undefined);
+    if (BACKEND) {
+        return fetch(BACKEND + '/jikan?path=' + encodeURIComponent(path), signal ? { signal } : undefined);
     }
-    return fetch('https://api.jikan.moe/v4' + path, signal ? { signal } : undefined);
+    return fetch('/jikan?path=' + encodeURIComponent(path), signal ? { signal } : undefined);
 }
 
 // ─── localStorage-кеш деталей аниме (TTL 24ч) ─────────────────────────────────
@@ -2339,7 +2341,7 @@ function kodikFindPlayerUrl(malId, ep) {
 }
 
 async function resolveAnimegoEmbedUrl(provider, malId, ep) {
-    if (!malId || !needsKodikProxy()) return null;
+    if (!malId || (!needsKodikProxy() && !BACKEND)) return null;
     const params = new URLSearchParams({
         provider,
         malId: String(malId),
@@ -2347,7 +2349,7 @@ async function resolveAnimegoEmbedUrl(provider, malId, ep) {
     });
     if (currentAnime?.displayTitle) params.set('title', currentAnime.displayTitle);
     try {
-        const res = await fetch(`/embed-resolve?${params}`, { signal: AbortSignal.timeout(22000) });
+        const res = await fetch(`${BACKEND}/embed-resolve?${params}`, { signal: AbortSignal.timeout(22000) });
         if (!res.ok) return null;
         const data = await res.json();
         return data.url || null;
@@ -2384,11 +2386,11 @@ async function ensureKinopoiskId(malId) {
 }
 
 async function resolveBalancerUrl(provider, malId) {
-    if (!needsKodikProxy()) return null;
+    if (!needsKodikProxy() && !BACKEND) return null;
     const kp = await ensureKinopoiskId(malId);
     if (!kp) return null;
     try {
-        const res = await fetch(`/balancer-resolve?provider=${provider}&kp=${kp}`, { signal: AbortSignal.timeout(16000) });
+        const res = await fetch(`${BACKEND}/balancer-resolve?provider=${provider}&kp=${kp}`, { signal: AbortSignal.timeout(16000) });
         if (!res.ok) return null;
         const data = await res.json();
         return data.url || null;
@@ -5632,7 +5634,7 @@ function needsKodikProxy() {
 
 async function _tryKodikProxy(body, endpoint = 'ftor') {
     try {
-        const res = await fetch(`/kodik-proxy?endpoint=${encodeURIComponent(endpoint)}`, {
+        const res = await fetch(`${BACKEND}/kodik-proxy?endpoint=${encodeURIComponent(endpoint)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body,
@@ -5824,8 +5826,8 @@ async function initKodikPlayer() {
     const player = getActiveServers()[currentServerIndex];
     if (!player || player.type !== 'kodik') return;
 
-    // На GitHub Pages нет серверного прокси — показываем Kodik iframe напрямую
-    if (!needsKodikProxy()) {
+    // Без прокси и без VPS бэкенда — показываем Kodik iframe напрямую
+    if (!needsKodikProxy() && !BACKEND) {
         const viewport = document.getElementById('player-viewport');
         if (viewport && currentAnime?.malId) {
             viewport.innerHTML = buildIframePlayerShell(
@@ -6445,16 +6447,16 @@ function buildFitBtn(prefix) {
 
 function proxifyAnilibria(url) {
     if (!url) return url;
-    if (/anilibria\.|libria\.fun/i.test(url) && needsKodikProxy()) {
-        return `/hls-proxy?url=${encodeURIComponent(url)}`;
+    if (/anilibria\.|libria\.fun/i.test(url) && (needsKodikProxy() || BACKEND)) {
+        return `${BACKEND}/hls-proxy?url=${encodeURIComponent(url)}`;
     }
     return url;
 }
 
-// Все запросы к AniLibria API идут через наш прокси (обход DPI) — только локально
+// Все запросы к AniLibria API идут через наш прокси (обход DPI)
 async function anilibriaFetch(apiUrl, options = {}) {
-    if (needsKodikProxy()) {
-        return fetch(`/hls-proxy?url=${encodeURIComponent(apiUrl)}`, options);
+    if (needsKodikProxy() || BACKEND) {
+        return fetch(`${BACKEND}/hls-proxy?url=${encodeURIComponent(apiUrl)}`, options);
     }
     return fetch(apiUrl, options);
 }
