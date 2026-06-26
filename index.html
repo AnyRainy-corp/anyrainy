@@ -6,6 +6,7 @@
     <title>AnyRainy — аниме онлайн</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23FF5A5F'/%3E%3C/svg%3E">
     <meta name="description" content="Смотрите лучшие аниме-сериалы онлайн. Без лишнего шума, только контент.">
+    <meta name="theme-color" content="#FF5A5F">
     <!-- Open Graph -->
     <meta property="og:type" content="website">
     <meta property="og:title" content="AnyRainy — аниме онлайн">
@@ -53,20 +54,25 @@
             src: url('/vendor/fonts/inter-cyrillic.woff2') format('woff2');
             unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
         }
+        @media (prefers-reduced-motion: no-preference) {
+            html { scroll-behavior: smooth; }
+        }
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: #ffffff;
             color: #222222;
             transition: background-color 0.3s ease, color 0.3s ease;
+            overscroll-behavior-y: none;
         }
         .dark body { background-color: #121212; color: #ffffff; }
 
         :root {
-            --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
-            --ease-spring: cubic-bezier(0.34, 1.15, 0.64, 1);
-            --dur-fast: 0.18s;
-            --dur-base: 0.28s;
-            --dur-slow: 0.42s;
+            --ease-out: cubic-bezier(0.25, 0, 0.2, 1);
+            --ease-spring: cubic-bezier(0.34, 1.40, 0.64, 1);
+            --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+            --dur-fast: 0.16s;
+            --dur-base: 0.26s;
+            --dur-slow: 0.40s;
         }
 
         .card-shadow {
@@ -133,29 +139,29 @@
 
         main > section:not(.hidden) { animation: none; }
         .section-enter {
-            animation: section-in var(--dur-slow) var(--ease-out) both;
+            animation: section-in var(--dur-slow) var(--ease-spring) both;
         }
         @keyframes section-in {
-            from { opacity: 0; transform: translateY(14px); }
-            to { opacity: 1; transform: none; }
+            from { opacity: 0; transform: translateY(20px) scale(0.98); filter: blur(4px); }
+            to   { opacity: 1; transform: none; filter: blur(0); }
         }
 
         .anim-item.anim-item-play {
-            animation: item-rise var(--dur-slow) var(--ease-out) both;
-            animation-delay: calc(var(--i, 0) * 42ms);
+            animation: item-rise 0.44s var(--ease-spring) both;
+            animation-delay: calc(var(--i, 0) * 32ms);
         }
         @keyframes item-rise {
-            from { opacity: 0; transform: translateY(12px) scale(0.98); }
-            to { opacity: 1; transform: none; }
+            from { opacity: 0; transform: translateY(18px) scale(0.95); }
+            to   { opacity: 1; transform: none; }
         }
 
         .anim-block.anim-block-play {
-            animation: block-in var(--dur-slow) var(--ease-out) both;
-            animation-delay: calc(var(--i, 0) * 70ms);
+            animation: block-in 0.48s var(--ease-spring) both;
+            animation-delay: calc(var(--i, 0) * 55ms);
         }
         @keyframes block-in {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: none; }
+            from { opacity: 0; transform: translateY(14px) scale(0.99); filter: blur(2px); }
+            to   { opacity: 1; transform: none; filter: blur(0); }
         }
 
         .modal-overlay {
@@ -212,7 +218,7 @@
             align-items: center; justify-content: center; flex-shrink: 0;
             animation: searchButtonFloat 2.2s ease-in-out infinite;
             box-shadow: 0 8px 18px rgba(255,90,95,0.22), 0 0 14px rgba(255,90,95,0.26);
-            transform-origin: center; will-change: transform, box-shadow;
+            transform-origin: center; will-change: transform;
         }
         .search-glow-button::before {
             content: ''; position: absolute; inset: -6px; border-radius: 9999px;
@@ -239,6 +245,10 @@
         .mobile-nav-btn:active { transform: scale(0.92); }
         .dark .mobile-nav-btn { color: #6b7280; }
         .mobile-nav-btn.active { color: #FF5A5F; }
+        /* 3D nav icons — grayscale when inactive, full color when active/hover */
+        /* Nav search inline next to logo — collapsed (max-w:0) until shown */
+        #nav-search { max-width:0; min-width:0; overflow:hidden; }
+        #nav-search.opacity-100 { max-width:260px; overflow:visible; }
 
         .admin-tab { color: #9ca3af; border-bottom: 2px solid transparent; transition: color 0.15s, border-color 0.15s; }
         .dark .admin-tab { color: #6b7280; }
@@ -247,6 +257,262 @@
 
         .synopsis-loading { animation: pulse 1.5s ease-in-out infinite; }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        /* Studio badge on cards */
+        .studio-badge {
+            display: inline-flex; align-items: center; gap: 4px;
+            background: none; border: 1px solid rgba(255,90,95,0.35);
+            color: #FF5A5F; font-size: 0.68rem; font-weight: 700;
+            padding: 1px 8px; border-radius: 99px; cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+            max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .studio-badge:hover { background: rgba(255,90,95,0.12); }
+
+        /* Studio chips in studios section */
+        .studio-chip {
+            display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+            padding: 10px 14px; border-radius: 14px; cursor: pointer;
+            background: var(--chip-bg, rgba(0,0,0,0.04));
+            border: 1.5px solid transparent;
+            transition: border-color 0.15s, background 0.15s, transform 0.12s;
+            text-align: left;
+        }
+        .dark .studio-chip { --chip-bg: rgba(255,255,255,0.05); }
+        .studio-chip:hover { border-color: rgba(255,90,95,0.4); background: rgba(255,90,95,0.06); transform: translateY(-1px); }
+        .studio-chip--active { border-color: #FF5A5F !important; background: rgba(255,90,95,0.1) !important; }
+        .studio-chip-name { font-size: 0.82rem; font-weight: 700; color: inherit; }
+        .studio-chip-count { font-size: 0.68rem; font-weight: 500; color: #FF5A5F; opacity: 0.85; }
+
+        /* Explore cards on home */
+        .explore-card {
+            flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-start;
+            gap: 8px; padding: 16px 18px; border-radius: 18px; cursor: pointer;
+            min-width: 140px; background: var(--ec-bg, white);
+            border: 1.5px solid rgba(0,0,0,0.07);
+            transition: transform 0.18s, box-shadow 0.18s, border-color 0.15s;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        }
+        .dark .explore-card { --ec-bg: #1a1a1a; border-color: rgba(255,255,255,0.07); }
+        .explore-card:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(255,90,95,0.18); border-color: rgba(255,90,95,0.35); }
+        .explore-card-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+        .explore-card-title { font-size: 0.82rem; font-weight: 700; color: inherit; }
+        .explore-card-sub { font-size: 0.68rem; color: #9ca3af; }
+
+        /* ── iOS 26 Liquid Glass меню ────────────────────────────────── */
+
+        /* Фон едва затемняется — iOS glass почти не мешает контенту */
+        .side-drawer-backdrop {
+            position: fixed; inset: 0; z-index: 400;
+            background: rgba(0,0,0,.06);
+            backdrop-filter: blur(2px);
+            -webkit-backdrop-filter: blur(2px);
+            opacity: 0; pointer-events: none; transition: opacity .32s ease;
+        }
+        .side-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+
+        /* Glass wrapper: ::before/::after работают без обрезки overflow */
+        .side-drawer {
+            position: fixed; top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.92);
+            z-index: 401; width: 370px; max-width: 92vw;
+            border-radius: 28px;
+            opacity: 0;
+            transition: transform .38s cubic-bezier(.34,1.56,.64,1), opacity .2s ease;
+            background: #ffffff;
+            border: 1px solid rgba(0,0,0,0.07);
+            box-shadow: 0 8px 32px rgba(0,0,0,.12), 0 2px 8px rgba(0,0,0,.08), 0 32px 80px rgba(0,0,0,.1);
+        }
+        .dark .side-drawer {
+            background: #1c1c1e;
+            border-color: rgba(255,255,255,0.08);
+            box-shadow: 0 8px 32px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.3), 0 32px 80px rgba(0,0,0,.4);
+        }
+        .side-drawer::before, .side-drawer::after { display: none; }
+
+        .side-drawer { pointer-events: none; }
+        .side-drawer.open { transform: translate(-50%, -50%) scale(1); opacity: 1; pointer-events: auto; }
+
+        /* Скролл-контейнер */
+        .side-drawer-inner {
+            position: relative; z-index: 1;
+            max-height: 88vh; overflow-y: auto; overflow-x: hidden;
+            border-radius: 31px;
+            --sfade-t: 1px;
+            --sfade-b: 28px;
+            -webkit-mask-image: linear-gradient(
+                to bottom,
+                transparent 0,
+                black var(--sfade-t),
+                black calc(100% - var(--sfade-b)),
+                transparent 100%
+            );
+            mask-image: linear-gradient(
+                to bottom,
+                transparent 0,
+                black var(--sfade-t),
+                black calc(100% - var(--sfade-b)),
+                transparent 100%
+            );
+        }
+
+        .side-drawer-inner > * { position: relative; z-index: 1; }
+
+        /* Navbar scroll effect */
+        #nav-brand-text {
+            transition: opacity .3s ease, max-width .35s ease, margin .3s ease;
+            max-width: 140px; overflow: hidden; white-space: nowrap;
+        }
+        .nav--scrolled #nav-brand-text {
+            opacity: 0; max-width: 0; margin: 0; pointer-events: none;
+        }
+        #nav-center-search {
+            position: absolute; left: 50%; transform: translateX(-50%);
+            opacity: 0; pointer-events: none;
+            transition: opacity .3s ease;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .nav--scrolled #nav-center-search {
+            opacity: 1; pointer-events: auto;
+        }
+        /* На мобиле центрируем, на десктопе скрываем (там уже есть inline search) */
+        @media (min-width: 768px) {
+            #nav-center-search { display: none; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .side-drawer.open::before { animation: none; }
+        }
+        /* Пауза авроры когда герой вне экрана */
+        .premium-hero.aurora-paused::before { animation-play-state: paused; }
+
+        /* ─── Глобальные мобильные фиксы ─── */
+        /* ─── Навбар: сдвиг лого при активной кнопке «Назад» на мобилке ─── */
+        @media (max-width: 767px) {
+            nav.has-back.nav--scrolled #nav-inner { justify-content: center; }
+            nav.has-back.nav--scrolled #nav-brand-text { opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+            #nav-back-mobile { display: none; }
+            nav.has-back.nav--scrolled #nav-back-mobile { display: flex; }
+        }
+        /* ─── Bottom nav: компактный режим при скролле ─── */
+        #mobile-bottom-nav { transition: padding .25s ease; }
+        #mobile-bottom-nav .mobile-nav-btn { transition: color var(--dur-fast) ease, transform var(--dur-fast) ease, padding .25s ease; }
+        #mobile-bottom-nav .mobile-nav-btn span {
+            transition: opacity .2s ease, max-height .25s ease, margin .25s ease;
+            max-height: 20px; overflow: hidden; display: block;
+        }
+        #mobile-bottom-nav.bottom-nav--compact .mobile-nav-btn span {
+            opacity: 0; max-height: 0; margin: 0;
+        }
+        #mobile-bottom-nav.bottom-nav--compact .mobile-nav-btn {
+            padding-top: 8px; padding-bottom: 8px;
+        }
+
+        @media (max-width: 767px) {
+            /* Скрываем inline search-бар (с красной кнопкой) — на мобилке используем пилл */
+            #nav-search { display: none !important; }
+            /* iOS: предотвращаем zoom при фокусе на input (нужен font-size >= 16px) */
+            input, select, textarea { font-size: max(16px, 1em) !important; }
+            /* Студии: заголовок меньше на мобилке */
+            #studios-section h2 { font-size: 1.4rem; }
+            /* Карточки студий: чуть больше padding для touch */
+            .studio-chip { padding: 11px 12px; min-height: 52px; }
+            .studio-chip-name { font-size: 0.78rem; }
+            /* Аниме-инфо таблица: чуть меньше шрифт */
+            .anime-info-row { font-size: 0.75rem; }
+            .anime-info-label { min-width: 60px; }
+            /* Синопсис: меньше интервалы */
+            .watch-hero-body { gap: 7px; }
+            /* Кнопки действий в watch-hero: компактные */
+            .watch-action-btn { padding: 5px 10px; font-size: 0.72rem; }
+            /* Карточки каталога: убираем избыточные gaps */
+            #anime-grid { gap: 10px; }
+            /* Комментарии: убираем тяжёлый padding */
+            #player-comments-wrapper { padding: 16px !important; border-radius: 20px !important; }
+            /* Студии: поиск занимает всю ширину */
+            #studios-section .relative { width: 100%; }
+
+            /* ─── Плеер: убираем лишнее на мобилке ─── */
+            /* Заголовок "Смотреть аниме X онлайн" — дублирует, убираем */
+            .watch-page-title { display: none; }
+            /* Кнопки выбора раскладки — на мобилке бесполезны */
+            .watch-layout-setting { display: none; }
+            /* watch-page-head теперь пустой — схлопываем */
+            .watch-page-head { padding: 0; min-height: 0; }
+            /* Уменьшаем отступы watch-hero */
+            .watch-hero-inner { padding: 10px 12px; gap: 10px; }
+            /* Небольшой отступ блока плеера */
+            .watch-player-wrap { margin-top: 4px; }
+            /* Кнопки "В избранное" / "Ссылка" — иконка + текст, но компактнее */
+            .watch-action-btn i { width: 14px; height: 14px; }
+        }
+        .drawer-nav-item {
+            display: flex; align-items: center; gap: 13px;
+            padding: 11px 16px; border-radius: 12px; cursor: pointer;
+            font-size: 0.9rem; font-weight: 600; text-decoration: none;
+            color: #111; transition: background .15s, color .15s;
+            border: none; background: none; width: 100%; text-align: left;
+        }
+        .dark .drawer-nav-item { color: #f3f4f6; }
+        .drawer-nav-item:hover {
+            background: rgba(255,90,95,.08);
+            color: #FF5A5F;
+        }
+        .dark .drawer-nav-item:hover {
+            background: rgba(255,255,255,.07);
+            color: #FF5A5F;
+        }
+        .drawer-nav-item svg, .drawer-nav-item [data-lucide] { width: 18px; height: 18px; flex-shrink: 0; }
+        .drawer-section-label {
+            font-size: 0.65rem; font-weight: 700; letter-spacing: .08em;
+            text-transform: uppercase; color: #9ca3af; padding: 0 18px;
+            margin: 4px 0 2px;
+        }
+        .drawer-toggle-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 10px 16px; border-radius: 12px;
+        }
+        .drawer-toggle-label { display: flex; align-items: center; gap: 12px; font-size: 0.9rem; font-weight: 600; color: #111; }
+        .dark .drawer-toggle-label { color: #f3f4f6; }
+        .drawer-toggle-label [data-lucide] { width: 18px; height: 18px; flex-shrink: 0; color: #9ca3af; }
+        .drawer-switch {
+            width: 42px; height: 23px; border-radius: 99px; border: none;
+            background: #e5e7eb; cursor: pointer; position: relative;
+            transition: background .2s; flex-shrink: 0;
+        }
+        .dark .drawer-switch { background: #374151; }
+        .drawer-switch.on { background: #FF5A5F; }
+        .drawer-switch::after {
+            content: ''; position: absolute; top: 2px; left: 2px;
+            width: 19px; height: 19px; border-radius: 50%; background: #fff;
+            box-shadow: 0 1px 4px rgba(0,0,0,.22);
+            transition: transform .22s cubic-bezier(.32,.72,0,1);
+        }
+        .drawer-switch.on::after { transform: translateX(19px); }
+        .drawer-lang-pill {
+            display: flex; background: #f3f4f6; border-radius: 99px; padding: 2px; gap: 1px;
+        }
+        .dark .drawer-lang-pill { background: #1f2937; }
+        .drawer-lang-btn {
+            padding: 3px 12px; border-radius: 99px; font-size: 0.72rem; font-weight: 700;
+            cursor: pointer; border: none; background: transparent; color: #9ca3af;
+            transition: all .15s;
+        }
+        .drawer-lang-btn.active { background: #FF5A5F; color: #fff; box-shadow: 0 1px 6px rgba(255,90,95,.35); }
+
+        /* 3D card tilt — только для карточек франшиз */
+        #franchises-grid .ongoing-card { transform-style: preserve-3d; will-change: transform; }
+        .card-sheen {
+            position: absolute; inset: 0; pointer-events: none; opacity: 0;
+            z-index: 10; border-radius: inherit;
+            transition: opacity .22s ease;
+            background: radial-gradient(
+                ellipse 90% 90% at var(--sx,50%) var(--sy,50%),
+                rgba(255,255,255,.22) 0%,
+                rgba(255,90,95,.10) 42%,
+                transparent 68%
+            );
+        }
 
         .loading-progress-bar {
             background: linear-gradient(90deg, #FF5A5F, #ff9a9d, #FF5A5F);
@@ -772,21 +1038,23 @@
             position: relative;
             z-index: 1;
             display: flex;
-            flex-direction: column;
-            gap: 14px;
-            padding: 16px;
+            flex-direction: row;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 14px;
+        }
+        @media (min-width: 640px) {
+            .watch-hero-inner { gap: 16px; padding: 16px; }
         }
         @media (min-width: 768px) {
-            .watch-hero-inner {
-                flex-direction: row;
-                align-items: flex-start;
-                gap: 20px;
-                padding: 20px 20px 18px;
-            }
+            .watch-hero-inner { gap: 20px; padding: 20px 20px 18px; }
         }
         .watch-hero-poster {
             flex-shrink: 0;
-            width: 108px;
+            width: 76px;
+        }
+        @media (min-width: 480px) {
+            .watch-hero-poster { width: 96px; }
         }
         @media (min-width: 768px) {
             .watch-hero-poster { width: 148px; }
@@ -808,9 +1076,105 @@
             min-width: 0;
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 10px;
             padding-top: 2px;
         }
+
+        /* ─── Anime info table (poster + rows layout) ───────────────────────── */
+        .anime-info-table {
+            display: flex;
+            flex-direction: column;
+        }
+        .anime-info-row {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
+            font-size: 0.8rem;
+            line-height: 1.5;
+        }
+        .anime-info-row:last-child { border-bottom: none; }
+        .anime-info-label {
+            color: rgba(255,255,255,0.45);
+            min-width: 72px;
+            flex-shrink: 0;
+            font-weight: 500;
+        }
+        .anime-info-value {
+            color: rgba(255,255,255,0.88);
+            flex: 1;
+            min-width: 0;
+        }
+        .anime-info-genres { display: flex; flex-wrap: wrap; gap: 4px; }
+        .info-genre-tag {
+            background: rgba(255,90,95,0.18);
+            color: #FF7A7E;
+            border: 1px solid rgba(255,90,95,0.3);
+            border-radius: 20px;
+            padding: 1px 9px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        /* ─── Synopsis expand/collapse ──────────────────────────────────────── */
+        .anime-synopsis-wrap { display: flex; flex-direction: column; gap: 4px; }
+        .anime-synopsis-text {
+            font-size: 0.8rem;
+            line-height: 1.65;
+            color: rgba(255,255,255,0.7);
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-box-orient: vertical;
+            -webkit-line-clamp: 3;
+        }
+        .anime-synopsis-text.synopsis-expanded {
+            -webkit-line-clamp: unset;
+            display: block;
+        }
+        .synopsis-toggle-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: #FF5A5F;
+            text-align: left;
+            width: fit-content;
+            transition: opacity 0.15s;
+        }
+        .synopsis-toggle-btn:hover { opacity: 0.75; }
+
+        /* ─── Watch action buttons (избранное / поделиться) ─────────────────── */
+        .watch-action-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 99px;
+            border: none;
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 600;
+            backdrop-filter: blur(8px);
+            background: rgba(255,255,255,0.12);
+            color: #fff;
+            transition: background 0.18s;
+        }
+        .watch-action-btn:hover { background: rgba(255,255,255,0.22); }
+        .watch-action-btn--active { background: rgba(255,90,95,0.85) !important; }
+
+        /* ─── Poster larger on desktop ──────────────────────────────────────── */
+        @media (min-width: 768px) {
+            .watch-hero-poster { width: 160px !important; }
+            .anime-info-label { min-width: 82px; }
+        }
+        @media (min-width: 1024px) {
+            .watch-hero-poster { width: 185px !important; }
+        }
+
         /* Watch page — inline player (AnimeGO-style) */
         .watch-player-wrap {
             border-radius: 1.25rem;
@@ -913,6 +1277,8 @@
             min-height: 0;
             overflow-y: auto;
             padding: 8px 10px 12px;
+            overscroll-behavior: contain;
+            scroll-behavior: smooth;
         }
         .watch-sidebar-list {
             display: flex;
@@ -1189,8 +1555,23 @@
             pointer-events: none;
         }
         @media (max-width: 639px) {
+            .watch-player-layout--horizontal {
+                flex-direction: column;
+            }
             .watch-player-layout--horizontal .watch-player-sidebar {
-                width: min(100%, 220px);
+                width: 100%;
+                max-height: 220px;
+                border-left: none;
+                border-top: 1px solid rgba(255,255,255,0.06);
+                transition: max-height .35s ease, opacity .3s ease, border-color .35s ease;
+            }
+            .watch-player-layout--collapsed.watch-player-layout--horizontal .watch-player-sidebar {
+                width: auto;
+                max-height: 0;
+                border-top-color: transparent;
+            }
+            .watch-player-layout--vertical .watch-player-sidebar {
+                max-height: 200px;
             }
         }
         .watch-layout-setting {
@@ -1585,16 +1966,19 @@
             transition: opacity var(--dur-base) var(--ease-out);
             pointer-events: none;
         }
+        .ongoing-card .relative.aspect-\[3\/4\] {
+            transition: transform 0.32s var(--ease-spring), box-shadow 0.32s var(--ease-spring);
+        }
         .ongoing-card:hover .relative.aspect-\[3\/4\] {
-            box-shadow: 0 14px 30px rgba(0,0,0,0.20), 0 0 0 2px rgba(255,90,95,0.55);
-            transform: translateY(-4px);
+            box-shadow: 0 18px 40px rgba(0,0,0,0.25), 0 0 0 2px rgba(255,90,95,0.60);
+            transform: translateY(-6px) scale(1.025);
         }
         .dark .ongoing-card:hover .relative.aspect-\[3\/4\] {
-            box-shadow: 0 14px 34px rgba(0,0,0,0.55), 0 0 0 2px rgba(255,90,95,0.55);
+            box-shadow: 0 20px 44px rgba(0,0,0,0.65), 0 0 0 2px rgba(255,90,95,0.60);
         }
         .ongoing-card:hover .relative.aspect-\[3\/4\]::after { opacity: 1; }
-        .ongoing-card:hover img.object-cover { filter: saturate(1.08) brightness(1.03); }
-        .ongoing-card img.object-cover { transition: transform 0.5s var(--ease-out), filter var(--dur-base) ease; }
+        .ongoing-card:hover img.object-cover { filter: saturate(1.10) brightness(1.04); }
+        .ongoing-card img.object-cover { transition: transform 0.5s var(--ease-out), filter 0.25s ease; }
         .ongoing-card h3 { transition: color var(--dur-fast) ease; }
         .ongoing-card:hover h3 { color: #FF5A5F; }
 
@@ -1622,6 +2006,11 @@
                 rgba(255,255,255,0) 70%);
         }
         .ongoing-card img.object-cover[src] { position: relative; z-index: 1; }
+        /* Отключаем шиммер как только картинка начала грузиться */
+        .ongoing-card:has(img.object-cover[src]) .relative.aspect-\[3\/4\] {
+            animation: none;
+            background-image: none;
+        }
         @keyframes skeleton-shimmer {
             from { background-position: 200% 0; }
             to   { background-position: -200% 0; }
@@ -1679,7 +2068,8 @@
                 radial-gradient(38% 44% at 18% 28%, rgba(255,90,95,0.28), transparent 60%),
                 radial-gradient(34% 40% at 82% 22%, rgba(255,138,82,0.22), transparent 62%),
                 radial-gradient(40% 46% at 62% 88%, rgba(120,90,255,0.16), transparent 60%);
-            filter: blur(28px);
+            filter: blur(18px);
+            will-change: transform;
             animation: aurora-drift 18s ease-in-out infinite alternate;
         }
         .dark .premium-hero::before {
@@ -1701,17 +2091,6 @@
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 24px 60px -28px rgba(255,90,95,0.40);
         }
 
-        /* ─── Премиальная стеклянная навигация ─── */
-        nav.fixed {
-            background: rgba(255,255,255,0.72) !important;
-            backdrop-filter: blur(20px) saturate(1.4);
-            -webkit-backdrop-filter: blur(20px) saturate(1.4);
-            border-bottom: 1px solid transparent;
-            border-image: linear-gradient(90deg, transparent, rgba(255,90,95,0.35), transparent) 1;
-        }
-        .dark nav.fixed {
-            background: rgba(16,16,18,0.72) !important;
-        }
 
         /* ─── Главная CTA-кнопка: градиент + свечение ─── */
         .cta-primary {
@@ -1755,6 +2134,70 @@
         }
         .ongoing-card:hover .relative.aspect-\[3\/4\]::before {
             box-shadow: 0 18px 40px -12px rgba(255,90,95,0.45);
+        }
+
+        /* ════ Serial Experiments Lain: WIRED / CRT aesthetic ════ */
+        .ongoing-card { position: relative; }
+
+        /* Сканлайны поверх всей карточки */
+        .ongoing-card::before {
+            content: '';
+            position: absolute; inset: 0;
+            border-radius: 12px;
+            background: repeating-linear-gradient(
+                to bottom,
+                transparent 0px, transparent 3px,
+                rgba(0, 255, 70, 0.035) 3px, rgba(0, 255, 70, 0.035) 4px
+            );
+            pointer-events: none; z-index: 10;
+            opacity: 0; transition: opacity 0.5s ease;
+            mix-blend-mode: screen;
+        }
+        .ongoing-card:hover::before { opacity: 1; }
+
+        /* Glitch RGB-срезы */
+        .ongoing-card::after {
+            content: '';
+            position: absolute; inset: 0;
+            border-radius: 12px;
+            pointer-events: none; z-index: 11; opacity: 0;
+        }
+        .ongoing-card:hover::after {
+            animation: lain-slice 5s steps(1) infinite;
+        }
+        @keyframes lain-slice {
+            0%, 82%, 100% { opacity: 0; }
+            83% { opacity:1; clip-path:inset(22% 0 62% 0); background:rgba(0,255,80,.14); transform:translateX(-4px); }
+            84% { opacity:1; clip-path:inset(60% 0 18% 0); background:rgba(255,0,80,.10); transform:translateX(4px); }
+            85% { opacity:1; clip-path:inset(8% 0 80% 0); background:rgba(0,160,255,.09); transform:translateX(-2px); }
+            86% { opacity:0; }
+            92% { opacity:1; clip-path:inset(44% 0 44% 0); background:rgba(0,255,80,.11); transform:translateX(2px); }
+            93% { opacity:0; }
+        }
+
+        /* Постер: лёгкая десатурация + зелёный CRT-тон на hover */
+        .ongoing-card img.object-cover {
+            filter: saturate(0.82) contrast(1.06);
+        }
+        .ongoing-card:hover img.object-cover {
+            filter: saturate(0.42) contrast(1.25) hue-rotate(108deg) brightness(0.80) !important;
+        }
+
+        /* Рамка и свечение — зелёные вместо красных */
+        .ongoing-card:hover .relative.aspect-\[3\/4\] {
+            box-shadow: 0 18px 40px rgba(0,0,0,0.25), 0 0 0 2px rgba(0,220,80,0.60) !important;
+        }
+        .dark .ongoing-card:hover .relative.aspect-\[3\/4\] {
+            box-shadow: 0 20px 44px rgba(0,0,0,0.65), 0 0 0 2px rgba(0,220,80,0.72) !important;
+        }
+        .ongoing-card:hover .relative.aspect-\[3\/4\]::before {
+            box-shadow: 0 20px 45px -12px rgba(0,220,80,0.52) !important;
+        }
+
+        /* Название — terminal green с glow */
+        .ongoing-card:hover h3 {
+            color: #00d060 !important;
+            text-shadow: 0 0 12px rgba(0,200,80,0.55);
         }
 
         /* ════════════════════════════════════════════════════════════════
@@ -1872,8 +2315,8 @@
             flex-direction: column;
             background: #fff;
             box-shadow: 0 0 60px rgba(0,0,0,0.4);
-            transform: translateY(18px);
-            transition: transform .28s var(--ease-spring);
+            transform: translateY(24px) scale(0.97);
+            transition: transform 0.40s var(--ease-spring);
         }
         .dark .franchise-panel { background: #121212; }
         @media (min-width: 768px) {
@@ -1980,6 +2423,107 @@
         .franchise-watch:active { transform: scale(0.97); }
         .franchise-watch--yt { background: linear-gradient(135deg, #ff0000, #cc0000); }
 
+        /* Кнопка «Посмотреть подробнее» в шапке модалки */
+        .franchise-fullpage-btn {
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: #fff;
+            background: linear-gradient(135deg, #FF5A5F, #ff7a45);
+            transition: filter .15s, transform .12s;
+        }
+        .franchise-fullpage-btn:hover { filter: brightness(1.06); }
+        .franchise-fullpage-btn:active { transform: scale(0.97); }
+
+        /* ═══ Полноценная страница франшизы ═══ */
+        .franchise-hero {
+            position: relative;
+            border-radius: 24px;
+            overflow: hidden;
+            padding: 28px;
+            min-height: 220px;
+            display: flex;
+            align-items: flex-end;
+        }
+        @media (min-width: 768px) { .franchise-hero { padding: 40px; } }
+        .franchise-hero-bg {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            filter: blur(18px) saturate(1.1);
+            transform: scale(1.15);
+        }
+        .franchise-hero-shade {
+            position: absolute; inset: 0;
+            background: linear-gradient(135deg, rgba(10,10,12,0.82) 0%, rgba(10,10,12,0.6) 55%, rgba(255,90,95,0.28) 100%);
+        }
+        .franchise-hero-inner {
+            position: relative;
+            display: flex;
+            gap: 22px;
+            align-items: flex-end;
+            width: 100%;
+        }
+        .franchise-hero-poster {
+            flex-shrink: 0;
+            width: 110px;
+            border-radius: 14px;
+            box-shadow: 0 14px 40px rgba(0,0,0,0.5);
+            aspect-ratio: 3/4;
+            object-fit: cover;
+        }
+        @media (max-width: 639px) { .franchise-hero-poster { display: none; } }
+        .franchise-hero-text { color: #fff; min-width: 0; }
+        .franchise-hero-kicker {
+            font-size: 0.72rem; font-weight: 800; text-transform: uppercase;
+            letter-spacing: .08em; color: #ff9db0;
+        }
+        .franchise-hero-name { font-size: 1.8rem; font-weight: 800; line-height: 1.1; margin: 4px 0 6px; }
+        @media (min-width: 768px) { .franchise-hero-name { font-size: 2.4rem; } }
+        .franchise-hero-meta { font-size: 0.85rem; color: rgba(255,255,255,0.75); font-weight: 600; }
+        .franchise-hero-desc {
+            font-size: 0.88rem; line-height: 1.5; color: rgba(255,255,255,0.85); margin-top: 10px;
+            display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+            max-width: 70ch;
+        }
+        .franchise-block-title {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 1.3rem; font-weight: 800; color: #111;
+            margin-bottom: 16px; letter-spacing: -0.01em;
+        }
+        .dark .franchise-block-title { color: #fff; }
+        .franchise-timeline { display: flex; flex-direction: column; }
+        .franchise-item--page {
+            padding-left: 42px;
+            padding-bottom: 26px;
+        }
+        .franchise-item--page::before { left: 15px; }
+        .franchise-item--page .franchise-dot { left: 10px; }
+        .franchise-num {
+            position: absolute;
+            left: 0; top: 0;
+            width: 30px; height: 30px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 9px;
+            background: rgba(255,90,95,0.12);
+            color: #FF5A5F;
+            font-size: 0.85rem; font-weight: 800;
+        }
+        .franchise-poster--lg { width: 92px; height: 130px; }
+        @media (max-width: 639px) { .franchise-poster--lg { width: 70px; height: 100px; } }
+        .franchise-page-synopsis {
+            font-size: 0.85rem; line-height: 1.5; color: #555; margin-top: 8px;
+            display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
+            max-width: 75ch;
+        }
+        .dark .franchise-page-synopsis { color: #aaa; }
+
+
         /* ─── Связанные музыкальные клипы (YouTube) ─── */
         .related-badge-music {
             background: linear-gradient(135deg, #ff0000, #cc0000) !important;
@@ -1999,6 +2543,7 @@
         }
         .related-yt-play i { fill: rgba(255,0,0,0.92); }
         .related-card:hover .related-yt-play { transform: scale(1.15); opacity: 1; }
+        .related-card--current { cursor: default; outline: 2px solid #FF5A5F; outline-offset: 2px; border-radius: 0.75rem; }
 
         /* ─── Модалка YouTube ─── */
         .yt-modal {
@@ -2028,8 +2573,8 @@
             border-radius: 18px;
             overflow: hidden;
             box-shadow: 0 24px 70px rgba(0,0,0,0.6);
-            transform: translateY(14px) scale(0.97);
-            transition: transform .25s var(--ease-spring);
+            transform: translateY(22px) scale(0.95);
+            transition: transform 0.38s var(--ease-spring), opacity 0.22s ease;
         }
         .yt-modal.is-open .yt-modal-inner { transform: none; }
         .yt-modal-head {
@@ -2081,6 +2626,30 @@
             height: 100%;
             border: 0;
         }
+        .yt-modal-notfound {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            padding: 40px 20px;
+            color: #aaa;
+            font-size: 0.9rem;
+        }
+        .yt-search-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            background: #FF0000;
+            color: #fff;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-decoration: none;
+            transition: opacity .15s;
+        }
+        .yt-search-btn:hover { opacity: 0.85; }
+        }
 
         /* ─── Центральная подсказка горячих клавиш в плеере (громкость/звук) ─── */
         .player-key-hint {
@@ -2106,11 +2675,11 @@
         /* ─── Плавное появление пунктов списка (стаггер) ─── */
         .watch-sidebar-list--anim .watch-sidebar-player-item,
         .watch-sidebar-list--anim .watch-sidebar-voice-item {
-            animation: sidebar-item-in .32s var(--ease-out) both;
-            animation-delay: calc(var(--i, 0) * 35ms);
+            animation: sidebar-item-in .36s var(--ease-spring) both;
+            animation-delay: calc(var(--i, 0) * 28ms);
         }
         @keyframes sidebar-item-in {
-            from { opacity: 0; transform: translateX(-10px); }
+            from { opacity: 0; transform: translateX(-14px) scale(0.97); }
             to   { opacity: 1; transform: none; }
         }
 
@@ -2208,46 +2777,128 @@
             box-shadow: 0 8px 22px -6px rgba(255,90,95,0.55);
         }
 
+        /* ─── Навигация: пункты меню с активным состоянием ─── */
+        .nav-link {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 2px;
+            font-size: 0.95rem;
+            color: #374151;
+            transition: color .18s ease;
+        }
+        .dark .nav-link { color: #d1d5db; }
+        .nav-link:hover { color: #FF5A5F; }
+        .nav-link--active { color: #FF5A5F; font-weight: 600; }
+        .dark .nav-link--active { color: #ff7a72; }
+        /* Airbnb-style centered nav items */
+        .nav-center-item { display:inline-flex !important; flex-direction:column !important; align-items:center !important; gap:3px !important; padding:8px 22px 10px !important; font-size:.68rem; font-weight:600; border:none !important; border-bottom:2.5px solid transparent !important; border-radius:0 !important; color:#9ca3af !important; background:none !important; cursor:pointer; transition:color .18s ease,border-color .18s ease; text-decoration:none; }
+        .dark .nav-center-item { color:#6b7280 !important; }
+        .nav-center-item:hover { color:#111827 !important; border-bottom-color:#d1d5db !important; }
+        .dark .nav-center-item:hover { color:#f3f4f6 !important; border-bottom-color:#4b5563 !important; }
+        .nav-center-item.nav-link--active { color:#111827 !important; border-bottom-color:#111827 !important; }
+        .dark .nav-center-item.nav-link--active { color:#fff !important; border-bottom-color:#fff !important; }
+
+        /* ─── Анимация при смене секции ─── */
+        .section-swipe { animation: section-swipe-in 0.46s var(--ease-spring) both; }
+        @keyframes section-swipe-in {
+            from { opacity: 0; transform: translateX(36px) scale(0.97); filter: blur(3px); }
+            to   { opacity: 1; transform: none; filter: blur(0); }
+        }
+
+        /* ─── Back button spring slide-in ─── */
+        @keyframes nav-back-slide {
+            from { opacity: 0; transform: translateY(-50%) translateX(-14px) scale(0.92); }
+            to   { opacity: 1; transform: translateY(-50%) translateX(0) scale(1); }
+        }
+        nav.has-back #nav-back-mobile {
+            animation: nav-back-slide 0.32s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        }
+
+        /* ─── Bottom nav compact: scale up icons when text hides ─── */
+        #mobile-bottom-nav .mobile-nav-btn i {
+            transition: transform 0.28s var(--ease-spring);
+        }
+        #mobile-bottom-nav.bottom-nav--compact .mobile-nav-btn i {
+            transform: scale(1.15);
+        }
+
+        /* ─── Mobile tap spring feedback ─── */
+        .mobile-nav-btn { transition: color var(--dur-fast) ease, transform 0.15s var(--ease-spring), padding 0.25s ease; }
+        .mobile-nav-btn:active { transform: scale(0.80); }
+
     </style>
 </head>
 <body class="antialiased">
 
+<!-- 3D icon gradient defs (shared across all nav icons) -->
+<svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+  <defs>
+    <linearGradient id="icG1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFDADB"/><stop offset="1" stop-color="#FFB0B2"/></linearGradient>
+    <linearGradient id="icG2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFB0B2"/><stop offset="1" stop-color="#FF8385"/></linearGradient>
+    <linearGradient id="icG3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF8385"/><stop offset="1" stop-color="#F26467"/></linearGradient>
+    <linearGradient id="icG4" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#D63033"/><stop offset="1" stop-color="#A02025"/></linearGradient>
+    <linearGradient id="icG5" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#A02025"/><stop offset="1" stop-color="#6B0F12"/></linearGradient>
+    <radialGradient id="icGR" cx=".38" cy=".32" r=".7"><stop offset="0" stop-color="#FFDADB"/><stop offset=".55" stop-color="#FF8385"/><stop offset="1" stop-color="#C83033"/></radialGradient>
+  </defs>
+</svg>
+
     <!-- Navigation -->
     <nav class="fixed top-0 w-full z-50 bg-white/90 dark:bg-[#121212]/90 backdrop-blur-md border-b border-subtle transition-colors duration-300">
-        <div class="max-w-7xl mx-auto px-4 md:px-6 py-3 md:py-4 flex justify-between items-center gap-3">
+        <!-- Кнопка «Назад» в навбаре — только на мобилке, когда нужно -->
+        <button id="nav-back-mobile"
+            class="md:hidden hidden absolute left-4 top-1/2 -translate-y-1/2 z-10 flex items-center gap-1 text-sm font-medium text-gray-600 dark:text-gray-300 active:opacity-60 transition-opacity"
+            onclick="navBackMobile()">
+            <i data-lucide="chevron-left" class="w-5 h-5"></i>
+            <span id="nav-back-label">Назад</span>
+        </button>
+        <div id="nav-inner" class="relative max-w-7xl mx-auto px-4 md:px-6 py-3 md:py-0 flex items-center md:grid md:grid-cols-[1fr_auto_1fr] md:h-[74px]">
 
-            <!-- Logo -->
-            <div class="flex items-center gap-2 cursor-pointer shrink-0" onclick="goHome()">
-                <i data-lucide="cloud-rain" class="w-7 h-7 md:w-8 md:h-8 text-airbnb"></i>
-                <span class="text-xl md:text-2xl font-bold brand-gradient tracking-tight">AnyRainy</span>
-            </div>
-
-            <!-- Desktop search bar (appears on scroll) -->
-            <div id="nav-search" class="hidden md:flex items-center border-subtle rounded-full px-3 py-2 card-shadow bg-white dark:bg-[#1e1e1e] transition-all duration-300 w-1/3 opacity-0 scale-95 pointer-events-none">
-                <input type="text" id="nav-search-input" data-i18n-placeholder="nav_search_placeholder" placeholder="Найти аниме..."
-                    class="flex-1 bg-transparent outline-none text-sm px-3 text-gray-800 dark:text-gray-200 placeholder-gray-400">
-                <button onclick="triggerSearch('nav')" class="search-glow-button bg-airbnb p-2 rounded-full text-white hover:bg-airbnbDark transition-colors">
-                    <i data-lucide="search" class="w-4 h-4"></i>
+            <!-- Centered search (appears on scroll, mobile only) -->
+            <div id="nav-center-search">
+                <button onclick="openMobileSearch()" class="flex items-center gap-2 bg-white/90 dark:bg-[#1e1e1e]/90 backdrop-blur border border-subtle rounded-full px-4 py-2 text-sm text-gray-500 dark:text-gray-400 shadow-sm">
+                    <i data-lucide="search" class="w-4 h-4 text-airbnb shrink-0"></i>
+                    <span data-i18n="nav_search_placeholder">Найти аниме...</span>
                 </button>
             </div>
 
-            <!-- Desktop right nav -->
-            <div class="hidden md:flex items-center gap-4 font-medium text-[15px]">
-                <!-- Dark mode -->
-                <button onclick="toggleDarkMode()" class="text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white transition-colors">
-                    <i data-lucide="moon" class="w-5 h-5 hidden dark:block"></i>
-                    <i data-lucide="sun" class="w-5 h-5 block dark:hidden"></i>
-                </button>
-                <!-- Language toggle -->
-                <button id="lang-toggle" onclick="toggleLang()" class="text-xs font-bold text-gray-600 dark:text-gray-300 hover:text-airbnb dark:hover:text-airbnb transition-colors border border-subtle rounded-full px-3 py-1.5 bg-white dark:bg-[#1e1e1e]">RU</button>
-                <!-- Catalog -->
-                <a href="#catalog" onclick="openCatalog(); return false;" class="text-gray-800 dark:text-gray-200 hover:text-airbnb transition-colors" data-i18n="catalog">Каталог</a>
-                <!-- Favorites -->
-                <button onclick="openFavorites()" class="text-gray-800 dark:text-gray-200 hover:text-airbnb transition-colors flex items-center gap-1.5">
-                    <i data-lucide="heart" class="w-4 h-4"></i>
-                    <span data-i18n="favorites_nav">Избранное</span>
-                </button>
-                <!-- Account -->
+            <!-- Logo + search (left col) -->
+            <div class="flex items-center gap-3">
+                <div class="flex items-center gap-2 cursor-pointer shrink-0" onclick="goHome()">
+                    <i data-lucide="cloud-rain" class="w-7 h-7 md:w-8 md:h-8 text-airbnb"></i>
+                    <span id="nav-brand-text" class="text-xl md:text-2xl font-bold brand-gradient tracking-tight">AnyRainy</span>
+                </div>
+                <!-- Search bar (inline, collapsed by default via CSS max-width) -->
+                <div id="nav-search" class="flex items-center border-subtle rounded-full px-3 py-2 card-shadow bg-white dark:bg-[#1e1e1e] transition-all duration-300 opacity-0 scale-95 pointer-events-none">
+                    <input type="text" id="nav-search-input" data-i18n-placeholder="nav_search_placeholder" placeholder="Найти аниме..."
+                        class="flex-1 bg-transparent outline-none text-sm px-3 text-gray-800 dark:text-gray-200 placeholder-gray-400">
+                    <button onclick="triggerSearch('nav')" class="search-glow-button bg-airbnb p-2 rounded-full text-white hover:bg-airbnbDark transition-colors">
+                        <i data-lucide="search" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Center: 3D nav items (desktop only) -->
+            <div class="hidden md:flex items-end h-full">
+                <div class="flex items-end h-full">
+                    <a href="#home" onclick="goHome(); return false;" class="nav-link nav-center-item" data-nav="home">
+                        <i data-lucide="house" class="w-6 h-6 shrink-0"></i>
+                        <span data-i18n="home_nav">Главная</span>
+                    </a>
+                    <a href="#catalog" onclick="goCatalog(); return false;" class="nav-link nav-center-item" data-nav="list">
+                        <i data-lucide="layout-grid" class="w-6 h-6 shrink-0"></i>
+                        <span data-i18n="catalog">Каталог</span>
+                    </a>
+                    <button onclick="openSideDrawer()" class="nav-link nav-center-item" id="nav-drawer-btn">
+                        <i data-lucide="sidebar" class="w-6 h-6 shrink-0"></i>
+                        <span>Меню</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Right: account button -->
+            <div class="hidden md:flex items-center justify-end">
                 <button id="account-button" onclick="handleAccountButtonClick()" class="flex items-center gap-2 border-subtle rounded-full px-3 py-2 bg-white dark:bg-[#1e1e1e] hover:shadow-md transition-shadow cursor-pointer">
                     <div id="account-avatar-btn" class="w-7 h-7 bg-gray-500 rounded-full text-white flex items-center justify-center overflow-hidden shrink-0">
                         <i data-lucide="user" class="w-4 h-4"></i>
@@ -2255,31 +2906,22 @@
                     <span id="account-button-label" class="text-sm text-gray-700 dark:text-gray-200">Войти</span>
                 </button>
             </div>
-
-            <!-- Mobile right nav -->
-            <div class="flex md:hidden items-center gap-1">
-                <button onclick="toggleDarkMode()" class="p-2 text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white transition-colors">
-                    <i data-lucide="moon" class="w-5 h-5 hidden dark:block"></i>
-                    <i data-lucide="sun" class="w-5 h-5 block dark:hidden"></i>
-                </button>
-                <button id="lang-toggle-mobile" onclick="toggleLang()" class="text-xs font-bold text-gray-600 dark:text-gray-300 border border-subtle rounded-full px-2 py-1 bg-white dark:bg-[#1e1e1e]">RU</button>
-            </div>
         </div>
     </nav>
 
     <!-- Main Content -->
-    <main class="pt-[60px] md:pt-28 pb-24 md:pb-20 px-4 md:px-6 max-w-7xl mx-auto min-h-screen">
+    <main class="pt-[60px] md:pt-28 pb-32 md:pb-20 px-3 sm:px-4 md:px-6 max-w-7xl mx-auto min-h-screen">
 
         <!-- Home Section -->
         <section id="home-section" class="space-y-10 md:space-y-16">
 
             <!-- Hero (brand + mascot) -->
-            <div id="premium-hero" class="premium-hero relative overflow-hidden rounded-3xl border border-subtle bg-gradient-to-br from-airbnb/10 via-white to-white dark:from-airbnb/20 dark:via-[#161616] dark:to-[#101010] mt-2 px-6 py-9 md:px-12 md:py-16">
+            <div id="premium-hero" class="premium-hero relative overflow-hidden rounded-3xl border border-subtle bg-gradient-to-br from-airbnb/10 via-white to-white dark:from-airbnb/20 dark:via-[#161616] dark:to-[#101010] mt-2 px-4 py-6 sm:px-6 sm:py-9 md:px-12 md:py-16">
                 <!-- decorative glow -->
                 <div class="pointer-events-none absolute -top-16 -right-10 w-72 h-72 rounded-full bg-airbnb/20 blur-3xl"></div>
                 <div class="pointer-events-none absolute bottom-0 left-1/3 w-60 h-60 rounded-full bg-airbnb/10 blur-3xl"></div>
 
-                <!-- Mascot (replace src later). Hidden on mobile so layout never breaks. -->
+                <!-- Mascot -->
                 <img src="img/mascot.png" alt="AnyRainy"
                      class="pointer-events-none select-none hidden md:block absolute right-3 lg:right-12 bottom-0 h-[110%] max-h-[460px] w-auto object-contain drop-shadow-2xl z-0"
                      onerror="this.style.display='none'">
@@ -2289,10 +2931,10 @@
                         <i data-lucide="cloud-rain" class="w-3.5 h-3.5"></i>
                         <span data-i18n="hero_badge">Уютный кинозал AnyRainy</span>
                     </span>
-                    <h1 class="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight text-gray-900 dark:text-white leading-[1.05]">
+                    <h1 class="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight text-gray-900 dark:text-white leading-[1.05]">
                         Any<span class="text-airbnb">Rainy</span>
                     </h1>
-                    <p class="text-lg md:text-xl text-gray-600 dark:text-gray-300 font-light max-w-md" data-i18n="hero_slogan">
+                    <p class="text-sm sm:text-base md:text-xl text-gray-600 dark:text-gray-300 font-light max-w-md" data-i18n="hero_slogan">
                         Завари чай, накройся пледом и смотри любимое аниме под шум дождя — тепло, уютно и без лишнего шума.
                     </p>
                     <div class="flex flex-wrap gap-3">
@@ -2380,6 +3022,7 @@
                     </div>
                 </div>
             </div>
+
 
             <!-- Ad slot (728x90 desktop / 320x50 mobile). Подставьте сюда код баннера. -->
             <div class="flex justify-center">
@@ -2533,6 +3176,77 @@
                 <span data-i18n="back_to_catalog">Назад</span>
             </button>
             <div id="profile-container" class="space-y-6 md:space-y-8"></div>
+        </section>
+
+        <!-- Franchise Page Section -->
+        <section id="franchise-page-section" class="hidden space-y-6 md:space-y-8">
+            <button onclick="showSection('home')" class="flex items-center gap-2 text-gray-500 hover:text-black dark:hover:text-white transition-colors group text-sm font-medium mb-2">
+                <i data-lucide="chevron-left" class="w-4 h-4 group-hover:-translate-x-1 transition-transform"></i>
+                <span data-i18n="back_to_catalog">Назад</span>
+            </button>
+            <div id="franchise-page-container" class="space-y-8"></div>
+        </section>
+
+        <!-- Franchises Catalog Section -->
+        <section id="franchises-section" class="hidden space-y-6">
+            <div class="flex items-center gap-2.5 mt-2">
+                <span class="flex items-center justify-center w-10 h-10 rounded-xl bg-airbnb/10 text-airbnb shrink-0">
+                    <i data-lucide="git-branch" class="w-5 h-5"></i>
+                </span>
+                <div>
+                    <h2 class="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white" data-i18n="franchises_title">Франшизы</h2>
+                    <p class="text-sm text-gray-500 dark:text-gray-400" data-i18n="franchises_sub">Большие вселенные аниме — по порядку и с описанием</p>
+                </div>
+            </div>
+            <div id="franchises-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4"></div>
+        </section>
+
+        <!-- Studios Section -->
+        <section id="studios-section" class="hidden space-y-6">
+            <div class="flex items-center gap-2.5 mt-2">
+                <span class="flex items-center justify-center w-10 h-10 rounded-xl bg-airbnb/10 text-airbnb shrink-0">
+                    <i data-lucide="building-2" class="w-5 h-5"></i>
+                </span>
+                <div>
+                    <h2 class="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white" data-i18n="studios_title">Аниме-студии</h2>
+                    <p class="text-sm text-gray-500 dark:text-gray-400" data-i18n="studios_sub">Работы по производящей студии</p>
+                </div>
+            </div>
+            <div class="relative">
+                <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none"></i>
+                <input id="studio-search-input" type="text" data-i18n-placeholder="studios_search" placeholder="Поиск студии..."
+                       oninput="filterStudios(this.value)"
+                       class="w-full sm:max-w-xs pl-9 pr-4 py-2.5 rounded-full border border-subtle bg-white dark:bg-[#1e1e1e] text-base sm:text-sm outline-none focus:border-airbnb transition-colors">
+            </div>
+            <div id="studios-chips" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5"></div>
+            <div id="studio-anime-panel" class="hidden space-y-4 border-t border-subtle pt-6">
+                <div class="flex items-center justify-between">
+                    <h3 id="studio-anime-title" class="text-xl font-bold text-gray-900 dark:text-white"></h3>
+                    <button onclick="closeStudioPanel()" class="flex items-center gap-1.5 text-sm text-gray-500 hover:text-airbnb transition-colors font-medium">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                        <span data-i18n="studio_back">Все студии</span>
+                    </button>
+                </div>
+                <div id="studio-anime-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 md:gap-4"></div>
+            </div>
+        </section>
+
+        <!-- Favorites Full Page Section -->
+        <section id="favorites-page-section" class="hidden space-y-6">
+            <button onclick="showSection('home')" class="flex items-center gap-2 text-gray-500 hover:text-black dark:hover:text-white transition-colors group text-sm font-medium mb-2">
+                <i data-lucide="chevron-left" class="w-4 h-4 group-hover:-translate-x-1 transition-transform"></i>
+                <span data-i18n="back_to_catalog">Назад</span>
+            </button>
+            <div class="flex items-center gap-2.5">
+                <span class="flex items-center justify-center w-10 h-10 rounded-xl bg-airbnb/10 text-airbnb shrink-0">
+                    <i data-lucide="heart" class="w-5 h-5"></i>
+                </span>
+                <div>
+                    <h2 class="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white" data-i18n="favorites_title">Избранное</h2>
+                    <p id="favorites-page-count" class="text-sm text-gray-500 dark:text-gray-400"></p>
+                </div>
+            </div>
+            <div id="favorites-page-content"></div>
         </section>
 
     </main>
@@ -2702,14 +3416,22 @@
     <!-- ========================= FAVORITES MODAL ========================= -->
     <div id="favorites-modal" class="modal-overlay hidden fixed inset-0 z-[60] auth-backdrop px-4 py-4 overflow-y-auto flex items-start justify-center">
         <div class="modal-panel w-full max-w-2xl bg-white dark:bg-[#1e1e1e] rounded-[2rem] card-shadow mt-4 mb-4 overflow-hidden">
-            <div class="p-5 border-b border-subtle flex items-center justify-between">
-                <div>
+            <div class="p-5 border-b border-subtle flex items-center justify-between gap-3">
+                <div class="min-w-0">
                     <h3 class="text-xl font-bold text-gray-900 dark:text-white" data-i18n="favorites_title">Избранное</h3>
                     <p class="text-sm text-gray-500 dark:text-gray-400" data-i18n="favorites_sub">Сохранённые аниме</p>
                 </div>
-                <button onclick="closeFavorites()" class="p-1 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">
-                    <i data-lucide="x" class="w-5 h-5"></i>
-                </button>
+                <div class="flex items-center gap-2 shrink-0">
+                    <button onclick="openFavoritesPage()" id="favorites-viewall-btn"
+                        class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-sm font-semibold text-white whitespace-nowrap"
+                        style="background:linear-gradient(135deg,#FF5A5F,#ff7a45);">
+                        <span data-i18n="favorites_view_all">Посмотреть все</span>
+                        <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                    </button>
+                    <button onclick="closeFavorites()" class="p-1 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
             </div>
             <div class="p-5">
                 <div id="favorites-guest" class="hidden text-center py-12 space-y-4">
@@ -2809,25 +3531,112 @@
     <nav id="mobile-bottom-nav" class="fixed bottom-0 left-0 right-0 z-40 md:hidden bg-white/95 dark:bg-[#121212]/95 backdrop-blur-md border-t border-subtle">
         <div class="grid grid-cols-4" style="padding-bottom: max(8px, env(safe-area-inset-bottom))">
             <button onclick="goHome()" id="mob-nav-home" class="mobile-nav-btn active flex flex-col items-center gap-0.5 pt-2 pb-1.5 transition-colors">
-                <i data-lucide="home" class="w-5 h-5"></i>
+                <i data-lucide="house" class="w-[22px] h-[22px] shrink-0"></i>
                 <span class="text-[10px] font-semibold" data-i18n="mob_home">Главная</span>
             </button>
-            <button onclick="openFavorites()" id="mob-nav-favorites" class="mobile-nav-btn flex flex-col items-center gap-0.5 pt-2 pb-1.5 transition-colors">
-                <i data-lucide="heart" class="w-5 h-5"></i>
-                <span class="text-[10px] font-semibold" data-i18n="favorites_nav">Избранное</span>
+            <button onclick="openSideDrawer()" id="mob-nav-menu" class="mobile-nav-btn flex flex-col items-center gap-0.5 pt-2 pb-1.5 transition-colors">
+                <i data-lucide="layout-grid" class="w-[22px] h-[22px] shrink-0"></i>
+                <span class="text-[10px] font-semibold">Меню</span>
             </button>
             <button onclick="openMobileSearch()" id="mob-nav-search" class="mobile-nav-btn flex flex-col items-center gap-0.5 pt-2 pb-1.5 transition-colors">
-                <i data-lucide="search" class="w-5 h-5"></i>
+                <i data-lucide="search" class="w-[22px] h-[22px] shrink-0"></i>
                 <span class="text-[10px] font-semibold" data-i18n="mob_search">Поиск</span>
             </button>
             <button onclick="handleAccountButtonClick()" id="mob-nav-account" class="mobile-nav-btn flex flex-col items-center gap-0.5 pt-2 pb-1.5 transition-colors">
-                <i data-lucide="user" class="w-5 h-5"></i>
+                <i data-lucide="circle-user" class="w-[22px] h-[22px] shrink-0"></i>
                 <span id="mob-nav-account-label" class="text-[10px] font-semibold">Профиль</span>
             </button>
         </div>
     </nav>
 
     <div id="toast-root" aria-live="polite"></div>
+
+    <!-- ========================= SIDE DRAWER ========================= -->
+    <div id="side-drawer-backdrop" class="side-drawer-backdrop" onclick="closeSideDrawer()"></div>
+    <div id="side-drawer" class="side-drawer" role="dialog" aria-modal="true" aria-label="Меню">
+        <!-- Drag handle pill -->
+        <aside class="side-drawer-inner">
+
+        <!-- Header: account card -->
+        <div class="px-4 pt-4 pb-3 border-b border-gray-100 dark:border-gray-700/50">
+            <div class="flex items-center justify-between mb-2.5">
+                <span class="text-[10px] font-bold uppercase tracking-widest text-airbnb">AnyRainy</span>
+                <button onclick="closeSideDrawer()" class="w-7 h-7 rounded-full flex items-center justify-center hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors text-gray-400">
+                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                </button>
+            </div>
+            <button onclick="closeSideDrawer(); handleAccountButtonClick()" class="w-full flex items-center gap-3 p-3 rounded-2xl bg-gray-50 dark:bg-gray-800/60 hover:bg-gray-100 dark:hover:bg-gray-700/60 transition-colors text-left border border-gray-100 dark:border-gray-700/50">
+                <div id="drawer-acct-avatar" class="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center overflow-hidden shrink-0 text-gray-500">
+                    <i data-lucide="user" class="w-5 h-5"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                    <div id="drawer-acct-name" class="text-sm font-bold text-gray-900 dark:text-white truncate">Войти в аккаунт</div>
+                    <div id="drawer-acct-sub" class="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">Профиль и настройки</div>
+                </div>
+                <i data-lucide="chevron-right" class="w-4 h-4 text-gray-400 shrink-0"></i>
+            </button>
+        </div>
+
+        <!-- Nav links -->
+        <div class="px-3 pt-4 pb-2 space-y-0.5">
+            <div class="drawer-section-label">Навигация</div>
+            <button onclick="closeSideDrawer(); openFranchisesCatalog()" class="drawer-nav-item">
+                <i data-lucide="git-branch"></i>
+                <span data-i18n="franchises_nav">Франшизы</span>
+            </button>
+            <button onclick="closeSideDrawer(); openStudiosPage()" class="drawer-nav-item">
+                <i data-lucide="building-2"></i>
+                <span data-i18n="studios_nav">Студии</span>
+            </button>
+            <button onclick="closeSideDrawer(); openFavoritesPage()" class="drawer-nav-item">
+                <i data-lucide="heart"></i>
+                <span data-i18n="favorites_nav">Избранное</span>
+            </button>
+            <button onclick="closeSideDrawer(); goCatalog()" class="drawer-nav-item">
+                <i data-lucide="layout-grid"></i>
+                <span data-i18n="catalog">Каталог</span>
+            </button>
+        </div>
+
+        <div class="mx-5 my-3 border-t border-subtle"></div>
+
+        <!-- Settings -->
+        <div class="px-3 pb-4 space-y-0.5">
+            <div class="drawer-section-label">Настройки</div>
+
+            <!-- Language -->
+            <div class="drawer-toggle-row">
+                <div class="drawer-toggle-label">
+                    <i data-lucide="languages"></i>
+                    <span>Язык</span>
+                </div>
+                <div class="drawer-lang-pill" id="drawer-lang-pill">
+                    <button class="drawer-lang-btn" id="drawer-lang-ru" onclick="drawerSetLang('ru')">RU</button>
+                    <button class="drawer-lang-btn" id="drawer-lang-en" onclick="drawerSetLang('en')">EN</button>
+                </div>
+            </div>
+
+            <!-- Theme -->
+            <div class="drawer-toggle-row">
+                <div class="drawer-toggle-label">
+                    <i data-lucide="moon"></i>
+                    <span>Тёмная тема</span>
+                </div>
+                <button id="drawer-theme-switch" class="drawer-switch" onclick="drawerToggleTheme()" aria-label="Toggle theme"></button>
+            </div>
+
+            <!-- 3D cards -->
+            <div class="drawer-toggle-row">
+                <div class="drawer-toggle-label">
+                    <i data-lucide="box"></i>
+                    <span>3D карточки</span>
+                </div>
+                <button id="drawer-3d-switch" class="drawer-switch" onclick="drawerToggle3D()" aria-label="Toggle 3D"></button>
+            </div>
+        </div>
+
+        </aside>
+    </div>
 
     <div id="player-modal" class="player-modal hidden" aria-hidden="true" role="dialog" aria-modal="true">
         <div class="player-modal-backdrop" onclick="closePlayerModal()"></div>
@@ -2864,6 +3673,229 @@
             new MutationObserver(sweep).observe(document.body, { childList: true, subtree: true });
             setInterval(sweep, 600);
         })();
+    </script>
+    <script>
+        // ── 3D card tilt — только для карточек франшиз ───────────────────────
+        window._ar3d = localStorage.getItem('ar_3d') !== '0';
+        (function () {
+            const TILT = 12, SC = 1.03;
+            function attach(card) {
+                if (card._t3d) return;
+                // Только карточки внутри #franchises-grid
+                if (!card.closest('#franchises-grid')) return;
+                card._t3d = true;
+                const box = card.querySelector('[class*="aspect"]') || card.querySelector('div');
+                if (!box) return;
+                const sh = document.createElement('div');
+                sh.className = 'card-sheen';
+                box.appendChild(sh);
+                card.addEventListener('mousemove', e => {
+                    if (!window._ar3d) return;
+                    const r = card.getBoundingClientRect();
+                    const x = (e.clientX - r.left) / r.width;
+                    const y = (e.clientY - r.top) / r.height;
+                    const rx = (0.5 - y) * TILT * 2;
+                    const ry = (x - 0.5) * TILT * 2;
+                    card.style.transition = 'none';
+                    card.style.transform = `perspective(600px) rotateX(${rx}deg) rotateY(${ry}deg) scale(${SC})`;
+                    card.style.boxShadow = `${-ry * .5}px ${rx * .5}px 20px rgba(255,90,95,.22)`;
+                    card.style.zIndex = '10';
+                    sh.style.setProperty('--sx', `${x * 100}%`);
+                    sh.style.setProperty('--sy', `${y * 100}%`);
+                    sh.style.opacity = '1';
+                });
+                card.addEventListener('mouseleave', () => {
+                    card.style.transition = 'transform .45s cubic-bezier(.03,.98,.52,.99), box-shadow .45s ease';
+                    card.style.transform = '';
+                    card.style.boxShadow = '';
+                    card.style.zIndex = '';
+                    sh.style.opacity = '0';
+                });
+            }
+            function scan() { document.querySelectorAll('#franchises-grid .ongoing-card').forEach(attach); }
+            scan();
+            new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
+        })();
+
+        // ── Hero 3D parallax ─────────────────────────────────────────────────
+        (function () {
+            const hero = document.getElementById('premium-hero');
+            if (!hero) return;
+
+            const mascot = hero.querySelector('img');
+            const glows  = [...hero.querySelectorAll('.pointer-events-none.absolute')];
+            const block  = hero.querySelector('.anim-block');
+
+            const EASE = 0.07;
+            let tgt = { x: 0, y: 0 }, cur = { x: 0, y: 0 };
+            let rafId = null, heroVisible = false;
+
+            function applyTransforms() {
+                cur.x += (tgt.x - cur.x) * EASE;
+                cur.y += (tgt.y - cur.y) * EASE;
+                const rx = cur.x, ry = cur.y;
+                hero.style.transform = `perspective(1000px) rotateX(${-ry * 4}deg) rotateY(${rx * 5}deg)`;
+                if (mascot) mascot.style.transform = `translate(${rx * 28}px, ${ry * 14}px)`;
+                if (block)  block.style.transform  = `translate(${rx * -8}px, ${ry * -5}px)`;
+                glows.forEach((g, i) => {
+                    g.style.transform = `translate(${rx * 45 * (i === 0 ? 1 : -1)}px, ${ry * 28 * (i === 0 ? 1 : -1)}px)`;
+                });
+            }
+
+            function tick() {
+                applyTransforms();
+                // Останавливаемся когда значения осели у нуля и герой не виден
+                const settled = Math.abs(cur.x) < 0.0005 && Math.abs(cur.y) < 0.0005
+                             && Math.abs(tgt.x) < 0.0005 && Math.abs(tgt.y) < 0.0005;
+                if (settled && !heroVisible) { rafId = null; return; }
+                rafId = requestAnimationFrame(tick);
+            }
+
+            function startRaf() {
+                if (!rafId) rafId = requestAnimationFrame(tick);
+            }
+
+            hero.addEventListener('mousemove', e => {
+                const r = hero.getBoundingClientRect();
+                tgt.x = (e.clientX - r.left) / r.width  - 0.5;
+                tgt.y = (e.clientY - r.top)  / r.height - 0.5;
+                startRaf();
+            });
+            hero.addEventListener('mouseleave', () => { tgt.x = 0; tgt.y = 0; startRaf(); });
+
+            // Пауза RAF когда герой уходит с экрана
+            new IntersectionObserver(([entry]) => {
+                heroVisible = entry.isIntersecting;
+                if (!heroVisible) { tgt.x = 0; tgt.y = 0; startRaf(); }
+                hero.classList.toggle('aurora-paused', !entry.isIntersecting);
+            }, { threshold: 0.1 }).observe(hero);
+        })();
+
+        // ── Side drawer ───────────────────────────────────────────────────────
+        function openSideDrawer() {
+            const drawer = document.getElementById('side-drawer');
+            const backdrop = document.getElementById('side-drawer-backdrop');
+            // Sync account info
+            const user = (typeof currentUser !== 'undefined') ? currentUser : null;
+            const nameEl = document.getElementById('drawer-acct-name');
+            const subEl  = document.getElementById('drawer-acct-sub');
+            const avEl   = document.getElementById('drawer-acct-avatar');
+            if (nameEl) nameEl.textContent = user ? user.username : 'Войти в аккаунт';
+            if (subEl)  subEl.textContent  = user ? user.email || 'Профиль и настройки' : 'Нажми чтобы войти';
+            if (avEl) {
+                const srcBtn = document.getElementById('account-avatar-btn');
+                const img = srcBtn?.querySelector('img');
+                avEl.innerHTML = img?.src
+                    ? `<img src="${img.src}" class="w-full h-full object-cover">`
+                    : `<i data-lucide="user" class="w-5 h-5"></i>`;
+            }
+            // Sync toggles state
+            const isDark = document.documentElement.classList.contains('dark');
+            document.getElementById('drawer-theme-switch')?.classList.toggle('on', isDark);
+            document.getElementById('drawer-3d-switch')?.classList.toggle('on', window._ar3d);
+            // Sync lang
+            const lang = (typeof currentLang !== 'undefined' ? currentLang : null)
+                || document.cookie.match(/anyrainy_lang=(\w+)/)?.[1] || 'ru';
+            document.getElementById('drawer-lang-ru')?.classList.toggle('active', lang === 'ru');
+            document.getElementById('drawer-lang-en')?.classList.toggle('active', lang === 'en');
+            // Open
+            drawer?.classList.add('open');
+            backdrop?.classList.add('open');
+            document.body.style.overflow = 'hidden';
+            lucide.createIcons({ nodes: [drawer] });
+            // Dynamic glass tint — через 50ms чтобы backdrop успел появиться
+            setTimeout(updateGlassTint, 50);
+            // Сброс scroll fade при открытии
+            const inner = drawer.querySelector('.side-drawer-inner');
+            if (inner) { inner.scrollTop = 0; updateDrawerScrollFade(inner); }
+        }
+
+        // ── Scroll edge fade (iOS-стиль) ─────────────────────────────────────
+        function updateDrawerScrollFade(inner) {
+            if (!inner) inner = document.querySelector('.side-drawer-inner');
+            if (!inner) return;
+            const atTop    = inner.scrollTop < 2;
+            const atBottom = inner.scrollTop + inner.clientHeight >= inner.scrollHeight - 2;
+            inner.style.setProperty('--sfade-t', atTop    ? '1px' : '22px');
+            inner.style.setProperty('--sfade-b', atBottom ? '1px' : '28px');
+        }
+        document.querySelector('.side-drawer-inner')
+            ?.addEventListener('scroll', () => updateDrawerScrollFade(), { passive: true });
+
+        // ── Dynamic Glass Tint ────────────────────────────────────────────────
+        function updateGlassTint() { /* removed — drawer is now a plain card */ }
+
+        function closeSideDrawer() {
+            document.getElementById('side-drawer')?.classList.remove('open');
+            document.getElementById('side-drawer-backdrop')?.classList.remove('open');
+            document.body.style.overflow = '';
+        }
+
+        function drawerToggleTheme() {
+            if (typeof toggleDarkMode === 'function') toggleDarkMode();
+            const isDark = document.documentElement.classList.contains('dark');
+            document.getElementById('drawer-theme-switch')?.classList.toggle('on', isDark);
+        }
+
+        function drawerSetLang(lang) {
+            if (typeof currentLang !== 'undefined' && currentLang === lang) return;
+            if (typeof toggleLang === 'function') toggleLang();
+            document.getElementById('drawer-lang-ru')?.classList.toggle('active', lang === 'ru');
+            document.getElementById('drawer-lang-en')?.classList.toggle('active', lang === 'en');
+        }
+
+        function drawerToggle3D() {
+            window._ar3d = !window._ar3d;
+            localStorage.setItem('ar_3d', window._ar3d ? '1' : '0');
+            document.getElementById('drawer-3d-switch')?.classList.toggle('on', window._ar3d);
+            if (!window._ar3d) {
+                document.querySelectorAll('.ongoing-card').forEach(card => {
+                    card.style.transition = 'transform .45s cubic-bezier(.03,.98,.52,.99)';
+                    card.style.transform = '';
+                    card.style.boxShadow = '';
+                    card.style.zIndex = '';
+                    const sh = card.querySelector('.card-sheen');
+                    if (sh) sh.style.opacity = '0';
+                });
+            }
+        }
+
+        // Close drawer on Escape
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSideDrawer(); });
+
+        // ── Кнопка «Назад» в навбаре (мобилка) ──────────────────────────────
+        let _navBackFn = null;
+        function showNavBack(label, fn) {
+            _navBackFn = fn;
+            const lbl = document.getElementById('nav-back-label');
+            if (lbl) lbl.textContent = label || 'Назад';
+            document.querySelector('nav.fixed')?.classList.add('has-back');
+        }
+        function hideNavBack() {
+            _navBackFn = null;
+            document.querySelector('nav.fixed')?.classList.remove('has-back');
+        }
+        function navBackMobile() { if (_navBackFn) _navBackFn(); }
+
+        function buildLiquidGlassFilter() {}
+
+        // ── Navbar + bottom nav scroll collapse (mobile) ─────────────────────
+        (function() {
+            const nav    = document.querySelector('nav.fixed');
+            const botNav = document.getElementById('mobile-bottom-nav');
+            if (!nav) return;
+            let ticking = false;
+            function update() {
+                const scrolled = window.scrollY > 55;
+                nav.classList.toggle('nav--scrolled', scrolled);
+                botNav?.classList.toggle('bottom-nav--compact', scrolled);
+                ticking = false;
+            }
+            window.addEventListener('scroll', () => {
+                if (!ticking) { requestAnimationFrame(update); ticking = true; }
+            }, { passive: true });
+        })();
+
     </script>
 </body>
 </html>

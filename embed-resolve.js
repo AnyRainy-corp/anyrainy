@@ -44,7 +44,7 @@ async function fetchText(targetUrl, timeoutMs = 18000) {
     // откатываемся на headless-браузер, который проходит JS-челлендж.
     if (isAnimegoHost(u.hostname)) {
         try {
-            return await fetchTextPlain(u, targetUrl, Math.min(timeoutMs, 8000));
+            return await fetchTextPlain(u, targetUrl, Math.min(timeoutMs, 3000));
         } catch (e) {
             if (ddgBrowser && ddgBrowser.isAvailable()) {
                 const xhr = u.pathname.includes('/player');

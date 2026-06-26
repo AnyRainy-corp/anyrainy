@@ -1,6 +1,7 @@
 // AnyRainy — локальный сервер с прокси для Kodik /ftor (без зависимостей)
 const http  = require('http');
 const https = require('https');
+const zlib  = require('zlib');
 const dns   = require('dns');
 // Node по умолчанию пробует IPv6 первым — на этой сети IPv6 не работает,
 // из-за чего все внешние запросы висят до таймаута
@@ -9,6 +10,64 @@ const fs    = require('fs');
 const path  = require('path');
 const url   = require('url');
 const { resolveEmbed } = require('./embed-resolve');
+
+// ── Balancer кеш (в памяти, TTL 30мин) ──────────────────────────────────────
+const _balancerCache = new Map(); // `${provider}:${kp}` → { url, exp }
+const _BALANCER_TTL  = 1800000;  // 30 min
+
+// ── Shikimori кеш (в памяти, TTL 24ч) ───────────────────────────────────────
+const _shikiCache     = new Map(); // id → { body, exp }
+const _shikiFrCache   = new Map(); // id → { body, exp }
+const _SHIKI_TTL      = 86400000;  // 24h
+
+// ── Jikan API прокси: серверный кеш + очередь 340мс (rate-limit Jikan 3 req/s) ─
+const _jikanCache  = new Map(); // path → { body, exp }
+const _jikanFlight = new Map(); // path → Promise<string>
+let   _jikanChain  = Promise.resolve(); // последовательная очередь к Jikan
+
+function jikanProxied(reqPath) {
+    const hit = _jikanCache.get(reqPath);
+    if (hit && hit.exp > Date.now()) return Promise.resolve(hit.body);
+    if (_jikanFlight.has(reqPath)) return _jikanFlight.get(reqPath);
+
+    let resolve_, reject_;
+    const p = new Promise((res, rej) => { resolve_ = res; reject_ = rej; });
+    _jikanFlight.set(reqPath, p);
+
+    _jikanChain = _jikanChain
+        .then(() => new Promise(r => setTimeout(r, 340)))
+        .then(() => new Promise(done => {
+            const r = https.get({
+                hostname: 'api.jikan.moe',
+                path: '/v4' + reqPath,
+                headers: { 'User-Agent': 'AnyRainy/1.0', 'Accept': 'application/json' },
+            }, sRes => {
+                let body = '';
+                sRes.setEncoding('utf8');
+                sRes.on('data', c => body += c);
+                sRes.on('end', () => {
+                    _jikanFlight.delete(reqPath);
+                    if (sRes.statusCode === 200) {
+                        const ttl = /\/(top|seasons)\/|[?&]q=/.test(reqPath)
+                            ? 6 * 3600000 : 2 * 3600000;
+                        _jikanCache.set(reqPath, { body, exp: Date.now() + ttl });
+                        resolve_(body);
+                    } else {
+                        reject_(new Error('Jikan HTTP ' + sRes.statusCode));
+                    }
+                    done();
+                });
+            });
+            r.on('error', e => { _jikanFlight.delete(reqPath); reject_(e); done(); });
+            r.setTimeout(15000, () => { r.destroy(); });
+        }))
+        .catch(() => {});
+
+    return p;
+}
+
+// ── Gzip-кеш для статических файлов (сжимается один раз при первом запросе) ──
+const _gzCache = new Map();
 
 const PORT = 3456;
 
@@ -255,7 +314,6 @@ const server = http.createServer((req, res) => {
         const kp = String(q.kp || '').replace(/[^0-9]/g, '');
         if (!kp) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ url: null, error: 'no kp' })); return; }
 
-        const ALLOHA_TOKEN = '45e20a5f584becf7a64dffb7174ddf';
         const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
         // GET → текст, с таймаутом
@@ -297,27 +355,128 @@ const server = http.createServer((req, res) => {
         const NAMES = { alloha: ['alloha'], collaps: ['collaps', 'lumex'], turbo: ['turbo'] };
         const wantNames = NAMES[provider] || [provider];
 
-        const reply = (u) => { if (!res.writableEnded) { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=1800' }); res.end(JSON.stringify({ url: u || null })); } };
+        const cacheKey = `${provider}:${kp}`;
+        const cached = _balancerCache.get(cacheKey);
+        if (cached && cached.exp > Date.now()) {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=1800' });
+            res.end(JSON.stringify({ url: cached.url })); return;
+        }
+
+        const reply = (u) => {
+            if (u) _balancerCache.set(cacheKey, { url: u, exp: Date.now() + _BALANCER_TTL });
+            if (!res.writableEnded) { res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=1800' }); res.end(JSON.stringify({ url: u || null })); }
+        };
 
         (async () => {
-            // 1) Прямой Alloha API
-            if (provider === 'alloha') {
+            // Агрегатор fbphdplay.top — отдаёт Alloha/Collaps/Turbo одним запросом
+            for (const base of ['https://fbphdplay.top/api/players', 'https://kinobox.tv/api/players/main']) {
                 try {
-                    const j = JSON.parse(await getText(`https://api.alloha.tv/?token=${ALLOHA_TOKEN}&kp=${kp}`));
-                    const iframe = j?.data?.iframe || (j?.data && findIframe(j.data, ['']));
-                    if (iframe) return reply(iframe.startsWith('//') ? 'https:' + iframe : iframe);
-                } catch (_) {}
-            }
-            // 2) Агрегатор Kinobox (и зеркало) — отдаёт все балансеры разом
-            for (const base of ['https://kinobox.tv/api/players', 'https://fbphdplay.top/api/players']) {
-                try {
-                    const j = JSON.parse(await getText(`${base}?kinopoisk=${kp}`));
-                    const hit = findIframe(j, wantNames);
+                    const j = JSON.parse(await getText(`${base}?kinopoisk=${kp}`, 9000));
+                    const arr = Array.isArray(j) ? j : (j.data || j);
+                    const hit = findIframe(arr, wantNames);
                     if (hit) return reply(hit);
                 } catch (_) {}
             }
             reply(null);
         })().catch(() => reply(null));
+        return;
+    }
+
+    // ── Shikimori: все части франшизы по MAL id ────────────────────────────────
+    if (parsed.pathname === '/shiki-franchise' && req.method === 'GET') {
+        const id = String((url.parse(req.url, true).query || {}).id || '').replace(/[^0-9]/g, '');
+        if (!id) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
+        const cachedFr = _shikiFrCache.get(id);
+        if (cachedFr && cachedFr.exp > Date.now()) {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=86400' });
+            res.end(cachedFr.body); return;
+        }
+        const shikiGet = path => new Promise((resolve, reject) => {
+            const r = https.get({ hostname: 'shikimori.one', path, headers: { 'User-Agent': 'AnyRainy', 'Accept': 'application/json' } }, sRes => {
+                let data = '';
+                sRes.setEncoding('utf8');
+                sRes.on('data', c => { data += c; });
+                sRes.on('end', () => resolve({ status: sRes.statusCode, body: data }));
+            });
+            r.on('error', reject);
+            r.setTimeout(10000, () => { r.destroy(); reject(new Error('timeout')); });
+        });
+        (async () => {
+            try {
+                const detail = await shikiGet(`/api/animes/${id}`);
+                const anime = JSON.parse(detail.body);
+                const franchise = anime?.franchise;
+                if (!franchise) {
+                    _shikiFrCache.set(id, { body: '[]', exp: Date.now() + _SHIKI_TTL });
+                    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=3600' });
+                    res.end('[]'); return;
+                }
+                const members = await shikiGet(`/api/animes?franchise=${encodeURIComponent(franchise)}&limit=100&order=aired_on`);
+                const body = members.status === 200 ? members.body : '[]';
+                _shikiFrCache.set(id, { body, exp: Date.now() + _SHIKI_TTL });
+                res.writeHead(200, {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                    'Cache-Control': 'public, max-age=86400',
+                });
+                res.end(body);
+            } catch (_) {
+                if (!res.writableEnded) { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end('[]'); }
+            }
+        })();
+        return;
+    }
+
+    // ── Shikimori: русское название + описание по MAL id ───────────────────────
+    if (parsed.pathname === '/shiki' && req.method === 'GET') {
+        const id = String((url.parse(req.url, true).query || {}).id || '').replace(/[^0-9]/g, '');
+        if (!id) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('{}'); return; }
+        const cached = _shikiCache.get(id);
+        if (cached && cached.exp > Date.now()) {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=86400' });
+            res.end(cached.body); return;
+        }
+        const opts = {
+            hostname: 'shikimori.one',
+            path: `/api/animes/${id}`,
+            headers: { 'User-Agent': 'AnyRainy', 'Accept': 'application/json' },
+        };
+        const sReq = https.get(opts, sRes => {
+            let data = '';
+            sRes.setEncoding('utf8');
+            sRes.on('data', c => { data += c; });
+            sRes.on('end', () => {
+                if (sRes.statusCode === 200) _shikiCache.set(id, { body: data, exp: Date.now() + _SHIKI_TTL });
+                res.writeHead(sRes.statusCode === 200 ? 200 : 502, {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*',
+                    'Cache-Control': 'public, max-age=86400',
+                });
+                res.end(sRes.statusCode === 200 ? data : '{}');
+            });
+        });
+        sReq.on('error', () => { if (!res.writableEnded) { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end('{}'); } });
+        sReq.setTimeout(10000, () => { sReq.destroy(); if (!res.writableEnded) { res.writeHead(504, { 'Content-Type': 'application/json' }); res.end('{}'); } });
+        return;
+    }
+
+    // ── Shikimori search (для русских запросов) ─────────────────────────────────
+    if (parsed.pathname === '/shiki-search' && req.method === 'GET') {
+        const q = String((url.parse(req.url, true).query || {}).q || '').trim().slice(0, 200);
+        if (!q) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
+        const sPath = `/api/animes?search=${encodeURIComponent(q)}&limit=20&order=ranked`;
+        const sOpts = { hostname: 'shikimori.one', path: sPath, headers: { 'User-Agent': 'AnyRainy/1.0', 'Accept': 'application/json' } };
+        const sReq2 = https.get(sOpts, sRes2 => {
+            let data = '';
+            sRes2.setEncoding('utf8');
+            sRes2.on('data', c => { data += c; });
+            sRes2.on('end', () => {
+                res.writeHead(sRes2.statusCode === 200 ? 200 : 502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=300' });
+                res.end(sRes2.statusCode === 200 ? data : '[]');
+            });
+        });
+        sReq2.on('error', () => { if (!res.writableEnded) { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end('[]'); } });
+        sReq2.setTimeout(8000, () => { sReq2.destroy(); if (!res.writableEnded) { res.writeHead(504, { 'Content-Type': 'application/json' }); res.end('[]'); } });
         return;
     }
 
@@ -457,6 +616,35 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // ── Jikan API прокси ────────────────────────────────────────────────────────
+    if (parsed.pathname === '/jikan' && req.method === 'GET') {
+        const q = url.parse(req.url, true).query || {};
+        const reqPath = decodeURIComponent(q.path || '');
+        if (!reqPath || !/^\/(?:anime|top|seasons)/.test(reqPath) || reqPath.includes('..')) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'invalid path' }));
+            return;
+        }
+        jikanProxied(reqPath)
+            .then(body => {
+                if (!res.writableEnded) {
+                    res.writeHead(200, {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Cache-Control': 'public, max-age=120',
+                    });
+                    res.end(body);
+                }
+            })
+            .catch(e => {
+                if (!res.writableEnded) {
+                    res.writeHead(502, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
+                }
+            });
+        return;
+    }
+
     // ── Статические файлы ───────────────────────────────────────────────────────
     let filePath = path.join(__dirname, parsed.pathname === '/' ? 'index.html' : parsed.pathname);
 
@@ -475,8 +663,26 @@ const server = http.createServer((req, res) => {
             return;
         }
         const ext = path.extname(filePath).toLowerCase();
-        res.writeHead(200, { 'Content-Type': MIME[ext] || 'text/plain' });
-        res.end(content);
+        const ct = MIME[ext] || 'text/plain';
+        const canGzip = ['.js', '.html', '.css', '.json'].includes(ext)
+            && (req.headers['accept-encoding'] || '').includes('gzip');
+
+        if (canGzip) {
+            if (_gzCache.has(filePath)) {
+                res.writeHead(200, { 'Content-Type': ct, 'Content-Encoding': 'gzip', 'Vary': 'Accept-Encoding' });
+                res.end(_gzCache.get(filePath));
+                return;
+            }
+            zlib.gzip(content, (e, buf) => {
+                if (e) { res.writeHead(200, { 'Content-Type': ct }); res.end(content); return; }
+                _gzCache.set(filePath, buf);
+                res.writeHead(200, { 'Content-Type': ct, 'Content-Encoding': 'gzip', 'Vary': 'Accept-Encoding' });
+                res.end(buf);
+            });
+        } else {
+            res.writeHead(200, { 'Content-Type': ct });
+            res.end(content);
+        }
     });
 });
 
