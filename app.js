@@ -129,10 +129,10 @@ function proxyImg(rawUrl) {
     if (!rawUrl) return '';
     let url = String(rawUrl);
     if (url.startsWith('//')) url = 'https:' + url;
-    if (url.startsWith('data:') || url.includes('/img?url=')) return url;
-    const onLocal = ['localhost', '127.0.0.1', ''].includes(location.hostname);
-    if (onLocal && IMG_PROXY_HOSTS.test(url)) {
-        return `/img?url=${encodeURIComponent(url)}`;
+    if (url.startsWith('data:') || url.includes('/img?url=') || url.includes('wsrv.nl')) return url;
+    if (IMG_PROXY_HOSTS.test(url)) {
+        if (needsKodikProxy()) return `/img?url=${encodeURIComponent(url)}`;
+        return `https://wsrv.nl/?url=${encodeURIComponent(url)}`;
     }
     return url;
 }
@@ -5767,9 +5767,6 @@ async function getKodikDirectUrl(link) {
             simpleBody, embedUrl
         );
         if (directUrl) { resultUrl = directUrl; }
-        else {
-            resultUrl = await _tryKodikProxy(simpleBody, 'ftor') || null;
-        }
     }
 
     if (!resultUrl) {
@@ -5826,6 +5823,18 @@ async function initKodikPlayer() {
     const token = ++kodikPlayerToken;
     const player = getActiveServers()[currentServerIndex];
     if (!player || player.type !== 'kodik') return;
+
+    // На GitHub Pages нет серверного прокси — показываем Kodik iframe напрямую
+    if (!needsKodikProxy()) {
+        const viewport = document.getElementById('player-viewport');
+        if (viewport && currentAnime?.malId) {
+            viewport.innerHTML = buildIframePlayerShell(
+                kodikFindPlayerUrl(currentAnime.malId, currentEpisodeNum)
+            );
+            lucide.createIcons();
+        }
+        return;
+    }
 
     startLoadingProgress('kodik');
 
