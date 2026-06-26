@@ -91,9 +91,12 @@ const AUTH_STORAGE_KEY = 'anistream_users';
 const WATCH_HISTORY_KEY = 'anyrainy_watch_history';
 const MAX_WATCH_HISTORY = 12;
 
-// ─── Jikan через серверный прокси (кеш + rate-limit на стороне сервера) ───────
+// ─── Jikan: через серверный прокси локально, напрямую на GitHub Pages ──────────
 function jikanFetch(path, signal) {
-    return fetch('/jikan?path=' + encodeURIComponent(path), signal ? { signal } : undefined);
+    if (needsKodikProxy()) {
+        return fetch('/jikan?path=' + encodeURIComponent(path), signal ? { signal } : undefined);
+    }
+    return fetch('https://api.jikan.moe/v4' + path, signal ? { signal } : undefined);
 }
 
 // ─── localStorage-кеш деталей аниме (TTL 24ч) ─────────────────────────────────
@@ -2336,7 +2339,7 @@ function kodikFindPlayerUrl(malId, ep) {
 }
 
 async function resolveAnimegoEmbedUrl(provider, malId, ep) {
-    if (!malId) return null;
+    if (!malId || !needsKodikProxy()) return null;
     const params = new URLSearchParams({
         provider,
         malId: String(malId),
@@ -2381,6 +2384,7 @@ async function ensureKinopoiskId(malId) {
 }
 
 async function resolveBalancerUrl(provider, malId) {
+    if (!needsKodikProxy()) return null;
     const kp = await ensureKinopoiskId(malId);
     if (!kp) return null;
     try {
@@ -5793,7 +5797,7 @@ async function getKodikDirectUrl(link) {
                         const u = await _postKodik(endpoint, signedBody, embedUrl);
                         if (u) { resultUrl = u; break; }
                     }
-                    if (!resultUrl && !needsKodikProxy()) {
+                    if (!resultUrl && needsKodikProxy()) {
                         resultUrl = await _tryKodikProxy(signedBody, 'ftor') || null;
                     }
                 }
@@ -6432,16 +6436,18 @@ function buildFitBtn(prefix) {
 
 function proxifyAnilibria(url) {
     if (!url) return url;
-    if (/anilibria\.|libria\.fun/i.test(url)) {
+    if (/anilibria\.|libria\.fun/i.test(url) && needsKodikProxy()) {
         return `/hls-proxy?url=${encodeURIComponent(url)}`;
     }
     return url;
 }
 
-// Все запросы к AniLibria API идут через наш прокси (обход DPI)
+// Все запросы к AniLibria API идут через наш прокси (обход DPI) — только локально
 async function anilibriaFetch(apiUrl, options = {}) {
-    const proxyUrl = `/hls-proxy?url=${encodeURIComponent(apiUrl)}`;
-    return fetch(proxyUrl, options);
+    if (needsKodikProxy()) {
+        return fetch(`/hls-proxy?url=${encodeURIComponent(apiUrl)}`, options);
+    }
+    return fetch(apiUrl, options);
 }
 
 // ─── AniLibria API ────────────────────────────────────────────────────────────
