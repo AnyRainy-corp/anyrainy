@@ -532,6 +532,11 @@ const server = http.createServer((req, res) => {
                 hlsRes.on('data', c => { body += c; });
                 hlsRes.on('end', () => {
                     const base = target.substring(0, target.lastIndexOf('/') + 1);
+                    // Абсолютный URL самого сервера, чтобы сегменты резолвились правильно
+                    // даже когда клиент на другом домене (например GitHub Pages)
+                    const proto = req.headers['x-forwarded-proto'] || 'https';
+                    const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3456';
+                    const selfBase = `${proto}://${host}`;
                     const rewritten = body.split('\n').map(line => {
                         const trimmed = line.trim();
                         if (!trimmed || trimmed.startsWith('#')) return line;
@@ -539,7 +544,7 @@ const server = http.createServer((req, res) => {
                         if (trimmed.startsWith('http')) abs = trimmed;
                         else if (trimmed.startsWith('/')) abs = `${u.protocol}//${u.hostname}${trimmed}`;
                         else abs = base + trimmed;
-                        return `/hls-proxy?url=${encodeURIComponent(abs)}`;
+                        return `${selfBase}/hls-proxy?url=${encodeURIComponent(abs)}`;
                     }).join('\n');
                     res.writeHead(200, {
                         'Content-Type': 'application/vnd.apple.mpegurl',

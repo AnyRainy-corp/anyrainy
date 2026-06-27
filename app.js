@@ -131,9 +131,10 @@ function proxyImg(rawUrl) {
     if (!rawUrl) return '';
     let url = String(rawUrl);
     if (url.startsWith('//')) url = 'https:' + url;
-    if (url.startsWith('data:') || url.includes('/img?url=') || url.includes('wsrv.nl')) return url;
+    if (url.startsWith('data:') || url.includes('/img?url=')) return url;
     if (IMG_PROXY_HOSTS.test(url)) {
         if (needsKodikProxy()) return `/img?url=${encodeURIComponent(url)}`;
+        if (BACKEND) return `${BACKEND}/img?url=${encodeURIComponent(url)}`;
         return `https://wsrv.nl/?url=${encodeURIComponent(url)}`;
     }
     return url;
@@ -5711,7 +5712,7 @@ function extractKodikUrlParams(html) {
 
 // Вспомогательная функция для POST к Kodik endpoint
 async function _postKodik(endpoint, body, referer) {
-    if (needsKodikProxy()) {
+    if (needsKodikProxy() || BACKEND) {
         const ep = String(endpoint).includes('/kor') ? 'kor' : 'ftor';
         return _tryKodikProxy(body, ep);
     }
