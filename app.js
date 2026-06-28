@@ -3091,10 +3091,10 @@ function playRandomAnime() {
         return;
     }
     const page = Math.floor(Math.random() * 20) + 1;
-    jikanFetch(`/top/anime?page=${page}&limit=25`)
+    shikiCatalogFetch(`order=ranked&kind=tv,movie&limit=25&page=${page}`)
         .then(r => r.json())
         .then(d => {
-            const list = (d.data || []).map(normalizeAnimeItem).filter(a => !a.isAdult);
+            const list = (Array.isArray(d) ? d : []).map(normalizeShikimoriItem).filter(a => !a.isAdult);
             if (!list.length) return;
             const pick = list[Math.floor(Math.random() * list.length)];
             if (!animeData.find(a => a.id === pick.id)) animeData.push(pick);
