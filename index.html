@@ -4271,46 +4271,35 @@
             const progressEl = document.getElementById('featured-progress');
             if (!wrap || !slider) return;
 
-            // ── Авто-режим: грузим топ текущего сезона ───────────────────────────
+            // ── Авто-режим: грузим топ текущего сезона с Shikimori ──────────────
             if (!FEATURED_ANIME.length) {
-                const fn = typeof jikanFetch === 'function' ? jikanFetch : p => fetch(`https://api.jikan.moe/v4${p}`);
-                fn('/seasons/now?limit=25').then(async r => {
+                const _be = typeof BACKEND !== 'undefined' ? BACKEND : '';
+                const seasonUrl = _be ? `${_be}/shiki-season` : '/shiki-season';
+                fetch(seasonUrl).then(async r => {
                     if (!r.ok) return;
                     const data = await r.json();
-                    const getRuTitle = a => {
-                        const ru = (a.titles || []).find(t => t.type === 'Russian');
-                        return ru?.title || a.title_russian || a.title;
-                    };
-                    const items = (data?.data || [])
-                        .filter(a => a.images?.jpg?.large_image_url && a.score && a.type === 'TV')
-                        .sort((a, b) => (b.score || 0) - (a.score || 0))
+                    const items = (Array.isArray(data) ? data : [])
+                        .filter(a => a.score && parseFloat(a.score) >= 6)
+                        .sort((a, b) => parseFloat(b.score || 0) - parseFloat(a.score || 0))
                         .slice(0, 6)
                         .map(a => ({
-                            malId: a.mal_id,
-                            title: getRuTitle(a),
-                            desc: '',  // описание подтянем отдельно через Shikimori
-                            img: a.images?.jpg?.large_image_url,
-                            youtubeId: a.trailer?.youtube_id || null,
+                            malId: Number(a.id),
+                            title: a.russian || a.name || '',
+                            desc: '',
+                            img: a.image?.original ? 'https://shikimori.io' + a.image.original : (a.image?.preview ? 'https://shikimori.io' + a.image.preview : ''),
+                            _poster: a.image?.original ? 'https://shikimori.io' + a.image.original : '',
                             _autoMode: true,
                             _badge: 'Новинки сезона',
                             _score: a.score,
-                            _genres: (a.genres || []).slice(0, 3).map(g => g.name).join(', '),
-                            _engTitle: a.title,
+                            _genres: (a.genres || []).slice(0, 3).map(g => g.russian || g.name).join(', '),
+                            _engTitle: a.name || '',
                         }));
                     if (items.length) {
                         FEATURED_ANIME.push(...items);
-                        // На GitHub Pages: конвертируем ytId → videoUrl через VPS-прокси
-                        const _be = typeof BACKEND !== 'undefined' ? BACKEND : '';
-                        if (_be) {
-                            FEATURED_ANIME.forEach(item => {
-                                if (item.youtubeId && !item.videoUrl)
-                                    item.videoUrl = `${_be}/yt-stream?id=${item.youtubeId}`;
-                            });
-                        }
                         buildSlider();
                     }
                 }).catch(() => {});
-                return; // buildSlider вызовется после загрузки
+                return;
             }
 
             buildSlider();

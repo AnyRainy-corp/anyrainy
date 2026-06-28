@@ -458,6 +458,35 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // ── Shikimori: текущий сезон ──────────────────────────────────────────────
+    if (parsed.pathname === '/shiki-season' && req.method === 'GET') {
+        if (!global._shikiSeasonCache) global._shikiSeasonCache = { body: null, exp: 0 };
+        if (global._shikiSeasonCache.body && global._shikiSeasonCache.exp > Date.now()) {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' });
+            res.end(global._shikiSeasonCache.body); return;
+        }
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth() + 1;
+        const season = month <= 3 ? 'winter' : month <= 6 ? 'spring' : month <= 9 ? 'summer' : 'fall';
+        const sPath = `/api/animes?season=${season}&year=${year}&kind=tv&limit=25&order=ranked&status=ongoing,released`;
+        const sOpts = { hostname: 'shikimori.io', path: sPath, headers: { 'User-Agent': 'AnyRainy/1.0', 'Accept': 'application/json' } };
+        const sReq = https.get(sOpts, sRes => {
+            let data = '';
+            sRes.setEncoding('utf8');
+            sRes.on('data', c => { data += c; });
+            sRes.on('end', () => {
+                const body = sRes.statusCode === 200 ? data : '[]';
+                global._shikiSeasonCache = { body, exp: Date.now() + 3600000 };
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' });
+                res.end(body);
+            });
+        });
+        sReq.on('error', () => { if (!res.writableEnded) { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end('[]'); } });
+        sReq.setTimeout(8000, () => { sReq.destroy(); if (!res.writableEnded) { res.writeHead(504, { 'Content-Type': 'application/json' }); res.end('[]'); } });
+        return;
+    }
+
     // ── Shikimori: русское название + описание по MAL id ───────────────────────
     if (parsed.pathname === '/shiki' && req.method === 'GET') {
         const id = String((url.parse(req.url, true).query || {}).id || '').replace(/[^0-9]/g, '');

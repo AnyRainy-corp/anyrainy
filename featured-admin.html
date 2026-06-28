@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Featured Slider — Admin</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f0f13; --bg2: #18181f; --bg3: #22222c;
+    --border: #2e2e3a; --accent: #e53935; --text: #e8e8f0;
+    --sub: #8888a0; --green: #43a047; --radius: 10px;
+  }
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
+
+  header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
+  header h1 { font-size: 16px; font-weight: 700; letter-spacing: .5px; }
+  header span { color: var(--sub); font-size: 12px; }
+  .save-btn { margin-left: auto; background: var(--accent); color: #fff; border: none; padding: 8px 22px; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+  .save-btn:hover { opacity: .85; }
+  .save-btn:disabled { opacity: .4; cursor: default; }
+  .save-status { font-size: 12px; color: var(--green); opacity: 0; transition: opacity .3s; }
+  .save-status.show { opacity: 1; }
+
+  .layout { display: grid; grid-template-columns: 320px 1fr; gap: 0; height: calc(100vh - 53px); }
+
+  /* LEFT: search panel */
+  .search-panel { background: var(--bg2); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+  .search-panel h2 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--sub); padding: 16px 16px 10px; }
+  .search-wrap { padding: 0 12px 12px; }
+  .search-wrap input { width: 100%; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 9px 12px; font-size: 14px; outline: none; }
+  .search-wrap input:focus { border-color: var(--accent); }
+  .search-results { flex: 1; overflow-y: auto; }
+  .search-results::-webkit-scrollbar { width: 4px; } .search-results::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .search-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background .1s; }
+  .search-item:hover { background: var(--bg3); }
+  .search-item img { width: 36px; height: 52px; object-fit: cover; border-radius: 4px; background: var(--bg3); flex-shrink: 0; }
+  .search-item-info { flex: 1; min-width: 0; }
+  .search-item-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .search-item-sub { font-size: 11px; color: var(--sub); margin-top: 2px; }
+  .search-item-add { background: var(--accent); color: #fff; border: none; border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer; flex-shrink: 0; }
+  .search-empty { padding: 24px; text-align: center; color: var(--sub); font-size: 13px; }
+  .search-loading { padding: 24px; text-align: center; color: var(--sub); }
+
+  /* RIGHT: list panel */
+  .list-panel { overflow-y: auto; padding: 20px; }
+  .list-panel::-webkit-scrollbar { width: 4px; } .list-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .list-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--sub); gap: 12px; }
+  .list-empty svg { opacity: .3; }
+  .list-empty p { font-size: 14px; }
+  .list-header { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .list-header h2 { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--sub); }
+  .list-header .count { background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 2px 8px; font-size: 11px; color: var(--sub); }
+  .mode-info { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 12px; color: var(--sub); }
+  .mode-info b { color: var(--text); }
+
+  /* Anime card */
+  .anime-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 12px; overflow: hidden; transition: border-color .15s; }
+  .anime-card.drag-over { border-color: var(--accent); }
+  .card-header { display: flex; align-items: center; gap: 12px; padding: 12px; }
+  .drag-handle { color: var(--sub); cursor: grab; flex-shrink: 0; padding: 4px; }
+  .drag-handle:active { cursor: grabbing; }
+  .card-poster { width: 44px; height: 64px; object-fit: cover; border-radius: 6px; background: var(--bg3); flex-shrink: 0; }
+  .card-meta { flex: 1; min-width: 0; }
+  .card-title { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card-sub { font-size: 11px; color: var(--sub); margin-top: 2px; }
+  .card-actions { display: flex; gap: 6px; }
+  .card-toggle { background: var(--bg3); border: 1px solid var(--border); color: var(--sub); border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer; transition: all .15s; }
+  .card-toggle:hover { border-color: var(--accent); color: var(--text); }
+  .card-toggle.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .card-remove { background: transparent; border: 1px solid var(--border); color: var(--sub); border-radius: 6px; padding: 5px 8px; cursor: pointer; transition: all .15s; }
+  .card-remove:hover { border-color: #e53935; color: #e53935; }
+
+  .card-body { border-top: 1px solid var(--border); padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .field-row { display: flex; flex-direction: column; gap: 4px; }
+  .field-row label { font-size: 11px; color: var(--sub); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+  .field-row input, .field-row select { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 7px 10px; font-size: 13px; outline: none; width: 100%; }
+  .field-row input:focus { border-color: var(--accent); }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .video-section { background: var(--bg3); border-radius: 8px; padding: 10px; }
+  .video-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  .video-tab { flex: 1; background: transparent; border: 1px solid var(--border); color: var(--sub); border-radius: 6px; padding: 6px; font-size: 12px; cursor: pointer; text-align: center; transition: all .15s; }
+  .video-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .video-pane { display: none; }
+  .video-pane.active { display: block; }
+  .upload-area { border: 2px dashed var(--border); border-radius: 8px; padding: 20px; text-align: center; cursor: pointer; transition: border-color .15s; position: relative; }
+  .upload-area:hover, .upload-area.drag { border-color: var(--accent); }
+  .upload-area input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .upload-area p { font-size: 12px; color: var(--sub); }
+  .upload-area p b { color: var(--text); }
+  .upload-preview { display: flex; align-items: center; gap: 8px; margin-top: 8px; background: var(--bg2); border-radius: 6px; padding: 8px; font-size: 12px; }
+  .upload-preview .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--sub); }
+  .upload-clear { background: none; border: none; color: var(--sub); cursor: pointer; font-size: 16px; line-height: 1; }
+  .upload-clear:hover { color: #e53935; }
+  .progress-bar { height: 3px; background: var(--border); border-radius: 3px; margin-top: 8px; overflow: hidden; display: none; }
+  .progress-bar .fill { height: 100%; background: var(--accent); transition: width .2s; width: 0%; }
+
+  .color-row { display: flex; align-items: center; gap: 8px; }
+  .color-row input[type=color] { width: 36px; height: 30px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg3); cursor: pointer; padding: 2px; }
+  .color-row input[type=text] { flex: 1; }
+  .color-preview { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e53935" stroke-width="2"><polygon points="23,7 16,12 23,17"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+  <h1>Featured Slider</h1>
+  <span>Управление баннерами главной страницы</span>
+  <span class="save-status" id="save-status">✓ Сохранено</span>
+  <button class="save-btn" id="save-btn" onclick="saveConfig()">Сохранить</button>
+</header>
+
+<div class="layout">
+  <!-- Левая панель: поиск -->
+  <div class="search-panel">
+    <h2>Поиск аниме</h2>
+    <div class="search-wrap">
+      <input type="text" id="search-input" placeholder="Название аниме..." autocomplete="off">
+    </div>
+    <div class="search-results" id="search-results">
+      <div class="search-empty">Введи название аниме для поиска</div>
+    </div>
+  </div>
+
+  <!-- Правая панель: список -->
+  <div class="list-panel" id="list-panel">
+    <div class="list-empty" id="list-empty">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg>
+      <p>Добавь аниме из поиска слева</p>
+      <p style="font-size:12px">Если список пуст — на главной будут аниме текущего сезона</p>
+    </div>
+    <div id="list-container" style="display:none">
+      <div class="mode-info">
+        <b>Ручной режим:</b> аниме будут показаны в порядке, указанном ниже. Перетаскивай карточки для изменения порядка. Если список очистить — включится авто-режим (аниме текущего сезона).
+      </div>
+      <div class="list-header">
+        <h2>Баннеры</h2>
+        <span class="count" id="list-count">0</span>
+      </div>
+      <div id="cards"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let items = [];   // [{malId, title, desc, badge, accent, youtubeUrl, videoUrl, _poster, _engTitle}]
+let dragSrc = null;
+
+// ── Загрузка сохранённого конфига ──────────────────────────────────────────
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/featured');
+    if (!r.ok) return;
+    const data = await r.json();
+    if (Array.isArray(data) && data.length) {
+      items = data;
+      renderList();
+    }
+  } catch(_) {}
+}
+
+// ── Сохранение ─────────────────────────────────────────────────────────────
+async function saveConfig() {
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Сохранение…';
+  try {
+    const payload = items.map(it => ({
+      malId:      it.malId,
+      title:      it.title     || '',
+      desc:       it.desc      || '',
+      badge:      it.badge     || '',
+      accent:     it.accent    || '',
+      youtubeId:  extractYtId(it.youtubeUrl || ''),
+      videoUrl:   it.videoUrl  || '',
+      _poster:    it._poster   || '',
+      _engTitle:  it._engTitle || '',
+    }));
+    const r = await fetch('/api/featured', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    if (r.ok) {
+      const s = document.getElementById('save-status');
+      s.classList.add('show');
+      setTimeout(() => s.classList.remove('show'), 2500);
+    }
+  } catch(e) { alert('Ошибка: ' + e.message); }
+  btn.disabled = false;
+  btn.textContent = 'Сохранить';
+}
+
+function extractYtId(url) {
+  if (!url) return '';
+  const m = url.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : (url.length === 11 ? url : '');
+}
+
+// ── Поиск ──────────────────────────────────────────────────────────────────
+let searchTimer = null;
+document.getElementById('search-input').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  if (!q) { document.getElementById('search-results').innerHTML = '<div class="search-empty">Введи название аниме для поиска</div>'; return; }
+  document.getElementById('search-results').innerHTML = '<div class="search-loading">Поиск…</div>';
+  searchTimer = setTimeout(() => doSearch(q), 500);
+});
+
+// Кэш результатов поиска (mal_id → объект аниме)
+const _searchCache = new Map();
+
+async function doSearch(q) {
+  try {
+    const r = await fetch(`/jikan?path=${encodeURIComponent('/anime?q=' + encodeURIComponent(q) + '&limit=15')}`);
+    if (!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    const list = data?.data || [];
+    if (!list.length) { document.getElementById('search-results').innerHTML = '<div class="search-empty">Ничего не найдено</div>'; return; }
+
+    // Сохраняем в кэш чтобы не передавать данные через onclick
+    list.forEach(a => _searchCache.set(a.mal_id, a));
+
+    const el = document.getElementById('search-results');
+    el.innerHTML = list.map(a => `
+      <div class="search-item" data-id="${a.mal_id}">
+        <img src="${a.images?.jpg?.image_url||''}" loading="lazy" onerror="this.src=''">
+        <div class="search-item-info">
+          <div class="search-item-title">${esc(a.title_russian||a.title)}</div>
+          <div class="search-item-sub">${a.year||''} · ${a.type||''} ${a.score?'· ★'+a.score:''}</div>
+        </div>
+        <button class="search-item-add" data-id="${a.mal_id}">+</button>
+      </div>
+    `).join('');
+
+    el.querySelectorAll('.search-item-add, .search-item').forEach(btn => {
+      btn.addEventListener('click', e => {
+        const id = parseInt(btn.dataset.id || btn.closest('[data-id]')?.dataset.id);
+        if (id) addAnime(id);
+      });
+    });
+  } catch(e) {
+    document.getElementById('search-results').innerHTML = `<div class="search-empty">Ошибка: ${e.message}</div>`;
+  }
+}
+
+function esc(s) { return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function addAnime(malId) {
+  if (items.find(i => i.malId === malId)) { alert('Уже добавлено'); return; }
+  const a = _searchCache.get(malId);
+  if (!a) return;
+  items.push({
+    malId,
+    title:     a.title_russian || a.title || '',
+    desc:      (a.synopsis || '').slice(0, 200),
+    badge:     '',
+    accent:    '',
+    youtubeUrl: a.trailer?.youtube_id ? `https://youtu.be/${a.trailer.youtube_id}` : '',
+    videoUrl:  '',
+    _poster:   a.images?.jpg?.large_image_url || a.images?.jpg?.image_url || '',
+    _engTitle: a.title || '',
+  });
+  renderList();
+}
+
+// ── Рендер списка ──────────────────────────────────────────────────────────
+function renderList() {
+  const empty = document.getElementById('list-empty');
+  const container = document.getElementById('list-container');
+  const cards = document.getElementById('cards');
+  const count = document.getElementById('list-count');
+
+  if (!items.length) {
+    empty.style.display = 'flex';
+    container.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  container.style.display = 'block';
+  count.textContent = items.length;
+
+  cards.innerHTML = '';
+  items.forEach((item, i) => cards.appendChild(buildCard(item, i)));
+}
+
+function buildCard(item, i) {
+  const card = document.createElement('div');
+  card.className = 'anime-card';
+  card.draggable = true;
+  card.dataset.idx = i;
+
+  const ytId = extractYtId(item.youtubeUrl || '');
+  const hasVid = !!item.videoUrl;
+  const activeTab = hasVid ? 'file' : 'yt';
+
+  card.innerHTML = `
+    <div class="card-header">
+      <div class="drag-handle" title="Перетащи для изменения порядка">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="18" x2="16" y2="18"/></svg>
+      </div>
+      <img class="card-poster" src="${item._poster||''}" onerror="this.src=''" alt="">
+      <div class="card-meta">
+        <div class="card-title">${esc(item.title)}</div>
+        <div class="card-sub">MAL ID: ${item.malId}</div>
+      </div>
+      <div class="card-actions">
+        <button class="card-toggle ${card.querySelector?.('.card-body') ? 'active':''}" id="toggle-${i}" onclick="toggleCard(${i})">Настройки</button>
+        <button class="card-remove" onclick="removeItem(${i})" title="Удалить">✕</button>
+      </div>
+    </div>
+    <div class="card-body" id="body-${i}" style="display:none">
+      <div class="two-col">
+        <div class="field-row">
+          <label>Название (переопределить)</label>
+          <input type="text" placeholder="${esc(item.title)}" value="${esc(item.title)}" oninput="items[${i}].title=this.value">
+        </div>
+        <div class="field-row">
+          <label>Бейдж</label>
+          <input type="text" placeholder="Новинки сезона" value="${esc(item.badge||'')}" oninput="items[${i}].badge=this.value">
+        </div>
+      </div>
+      <div class="field-row">
+        <label>Описание (переопределить)</label>
+        <input type="text" placeholder="Краткое описание…" value="${esc(item.desc||'')}" oninput="items[${i}].desc=this.value">
+      </div>
+      <div class="field-row">
+        <label>Цвет акцента</label>
+        <div class="color-row">
+          <input type="color" value="${item.accent||'#e53935'}" oninput="items[${i}].accent=this.value;this.nextElementSibling.value=this.value">
+          <input type="text" placeholder="#e53935" value="${esc(item.accent||'')}" oninput="items[${i}].accent=this.value;this.previousElementSibling.value=this.value">
+        </div>
+      </div>
+
+      <div class="video-section">
+        <div class="video-tabs">
+          <button class="video-tab ${activeTab==='yt'?'active':''}" id="tab-yt-${i}" onclick="switchTab(${i},'yt')">YouTube / трейлер</button>
+          <button class="video-tab ${activeTab==='file'?'active':''}" id="tab-file-${i}" onclick="switchTab(${i},'file')">Загрузить видео</button>
+        </div>
+        <div class="video-pane ${activeTab==='yt'?'active':''}" id="pane-yt-${i}">
+          <div class="field-row">
+            <label>Ссылка или ID YouTube</label>
+            <input type="text" placeholder="https://youtube.com/watch?v=... или просто ID" value="${esc(item.youtubeUrl||'')}" oninput="items[${i}].youtubeUrl=this.value;items[${i}].videoUrl=''">
+          </div>
+          ${ytId ? `<div style="margin-top:8px;border-radius:6px;overflow:hidden;"><img src="https://img.youtube.com/vi/${ytId}/mqdefault.jpg" style="width:100%;border-radius:6px" onerror="this.style.display='none'"></div>` : ''}
+        </div>
+        <div class="video-pane ${activeTab==='file'?'active':''}" id="pane-file-${i}">
+          ${hasVid ? `
+          <div class="upload-preview">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#43a047" stroke-width="2"><polygon points="23,7 16,12 23,17"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+            <span class="name">${esc(item.videoUrl)}</span>
+            <button class="upload-clear" onclick="clearVideo(${i})" title="Убрать видео">✕</button>
+          </div>` : `
+          <div class="upload-area" id="drop-${i}" ondragover="event.preventDefault();this.classList.add('drag')" ondragleave="this.classList.remove('drag')" ondrop="handleDrop(event,${i})">
+            <input type="file" accept="video/*" onchange="handleFile(event,${i})">
+            <p><b>Выбери файл</b> или перетащи сюда</p>
+            <p style="margin-top:4px">MP4, WebM · до 500 МБ</p>
+          </div>
+          <div class="progress-bar" id="prog-${i}"><div class="fill" id="prog-fill-${i}"></div></div>
+          `}
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Drag & drop reorder
+  card.addEventListener('dragstart', e => { dragSrc = i; e.dataTransfer.effectAllowed = 'move'; setTimeout(() => card.style.opacity = '.4', 0); });
+  card.addEventListener('dragend',   () => { card.style.opacity = ''; document.querySelectorAll('.anime-card').forEach(c => c.classList.remove('drag-over')); });
+  card.addEventListener('dragover',  e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; card.classList.add('drag-over'); });
+  card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+  card.addEventListener('drop', e => {
+    e.preventDefault();
+    if (dragSrc === null || dragSrc === i) return;
+    const moved = items.splice(dragSrc, 1)[0];
+    items.splice(i, 0, moved);
+    dragSrc = null;
+    renderList();
+  });
+
+  return card;
+}
+
+function toggleCard(i) {
+  const body = document.getElementById(`body-${i}`);
+  const btn  = document.getElementById(`toggle-${i}`);
+  const open = body.style.display === 'none';
+  body.style.display = open ? 'flex' : 'none';
+  btn.classList.toggle('active', open);
+}
+
+function switchTab(i, tab) {
+  document.getElementById(`tab-yt-${i}`).classList.toggle('active', tab==='yt');
+  document.getElementById(`tab-file-${i}`).classList.toggle('active', tab==='file');
+  document.getElementById(`pane-yt-${i}`).classList.toggle('active', tab==='yt');
+  document.getElementById(`pane-file-${i}`).classList.toggle('active', tab==='file');
+  if (tab === 'yt') items[i].videoUrl = '';
+}
+
+function removeItem(i) {
+  items.splice(i, 1);
+  renderList();
+}
+
+function clearVideo(i) {
+  items[i].videoUrl = '';
+  renderList();
+}
+
+async function handleFile(e, i) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  await uploadVideo(file, i);
+}
+
+async function handleDrop(e, i) {
+  e.preventDefault();
+  document.getElementById(`drop-${i}`)?.classList.remove('drag');
+  const file = e.dataTransfer.files?.[0];
+  if (!file) return;
+  await uploadVideo(file, i);
+}
+
+async function uploadVideo(file, i) {
+  const prog = document.getElementById(`prog-${i}`);
+  const fill = document.getElementById(`prog-fill-${i}`);
+  if (prog) { prog.style.display = 'block'; fill.style.width = '0%'; }
+
+  const form = new FormData();
+  form.append('video', file);
+
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload-video');
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable && fill) fill.style.width = (e.loaded/e.total*100) + '%';
+    };
+    xhr.onload = () => {
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (data.url) {
+          items[i].videoUrl = data.url;
+          items[i].youtubeUrl = '';
+          renderList();
+        } else { alert('Ошибка загрузки: ' + (data.error||'unknown')); }
+      } catch(_) { alert('Ошибка сервера'); }
+      resolve();
+    };
+    xhr.onerror = () => { alert('Ошибка загрузки'); resolve(); };
+    xhr.send(form);
+  });
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+loadConfig();
+</script>
+</body>
+</html>
