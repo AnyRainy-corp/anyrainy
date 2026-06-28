@@ -458,6 +458,44 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // ── Shikimori: универсальный каталог ─────────────────────────────────────
+    if (parsed.pathname === '/shiki-catalog' && req.method === 'GET') {
+        const q = url.parse(req.url, true).query || {};
+        const page  = Math.max(1, parseInt(q.page) || 1);
+        const order  = ['ranked','popularity','aired_on','name'].includes(q.order) ? q.order : 'ranked';
+        const status = (q.status || '').replace(/[^a-z,]/g,'');
+        const kind   = (q.kind   || '').replace(/[^a-z,_]/g,'');
+        const search = (q.search || '').slice(0, 200);
+        const limit  = Math.min(50, Math.max(1, parseInt(q.limit) || 50));
+        const cacheKey = `cat_${order}_${page}_${status}_${kind}_${encodeURIComponent(search)}`;
+        if (!global._shikiCatCache) global._shikiCatCache = new Map();
+        const hit = global._shikiCatCache.get(cacheKey);
+        if (hit && hit.exp > Date.now()) {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' });
+            res.end(hit.body); return;
+        }
+        let sPath = `/api/animes?order=${order}&limit=${limit}&page=${page}&score=1`;
+        if (status) sPath += `&status=${status}`;
+        if (kind)   sPath += `&kind=${kind}`;
+        if (search) sPath += `&search=${encodeURIComponent(search)}`;
+        const sOpts = { hostname: 'shikimori.io', path: sPath, headers: { 'User-Agent': 'AnyRainy/1.0', 'Accept': 'application/json' } };
+        const sReq = https.get(sOpts, sRes => {
+            let data = '';
+            sRes.setEncoding('utf8');
+            sRes.on('data', c => { data += c; });
+            sRes.on('end', () => {
+                const body = sRes.statusCode === 200 ? data : '[]';
+                const ttl = search ? 300000 : 3600000;
+                global._shikiCatCache.set(cacheKey, { body, exp: Date.now() + ttl });
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' });
+                res.end(body);
+            });
+        });
+        sReq.on('error', () => { if (!res.writableEnded) { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end('[]'); } });
+        sReq.setTimeout(10000, () => { sReq.destroy(); if (!res.writableEnded) { res.writeHead(504, { 'Content-Type': 'application/json' }); res.end('[]'); } });
+        return;
+    }
+
     // ── Shikimori: текущий сезон ──────────────────────────────────────────────
     if (parsed.pathname === '/shiki-season' && req.method === 'GET') {
         if (!global._shikiSeasonCache) global._shikiSeasonCache = { body: null, exp: 0 };

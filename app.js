@@ -2567,24 +2567,29 @@ function normalizeAnimeItem(item) {
 }
 
 function normalizeShikimoriItem(item) {
-    const id = item.id;
-    const titleRu = item.russian || item.name;
-    const titleEn = item.name;
-    const year = item.aired_on ? parseInt(item.aired_on.substring(0, 4)) : '';
-    const imageUrl = item.image?.original ? `https://shikimori.one${item.image.original}` : '';
+    const id = Number(item.id);
+    const titleRu = item.russian || item.name || '';
+    const titleEn = item.name || '';
+    const year = item.aired_on ? parseInt(item.aired_on.substring(0, 4)) : (item.released_on ? parseInt(item.released_on.substring(0, 4)) : '');
+    const imgBase = 'https://shikimori.io';
+    const imageUrl = item.image?.original ? imgBase + item.image.original
+                   : item.image?.preview  ? imgBase + item.image.preview : '';
+    const genres  = (item.genres  || []).map(g => g.russian || g.name).filter(Boolean);
+    const studios = (item.studios || []).map(s => ({ id: s.id, name: s.name }));
+    const isAdult = (item.rating || '') === 'rx';
     return {
         id, malId: id,
         title: titleEn, titleRu, titleEn,
         displayTitle: currentLang === 'en' ? titleEn : (titleRu || titleEn),
-        tags: [], studios: [],
+        tags: genres, studios,
         rating: parseFloat(item.score) || 0,
-        episodes: item.episodes || 12,
+        episodes: item.episodes || null,
         image: imageUrl,
         synopsis: '', synopsisEn: '',
-        year, season: '',
+        year, season: item.season || '',
         status: item.status || '',
         kind: item.kind || '',
-        isAdult: false, episodesList: []
+        isAdult, episodesList: []
     };
 }
 
@@ -2766,15 +2771,18 @@ async function openOngoing(id) {
 }
 
 // ─── Home carousels (rows) ────────────────────────────────────────────────────
-// Категории главной: ongoing (Jikan /seasons/now), top (/top/anime),
-// popular (/top/anime?filter=bypopularity). Те же эндпоинты переиспользуются
-// в секции «Смотреть все» с бесконечной прокруткой.
-
-function categoryEndpoint(cat, page, limit) {
+// Параметры для /shiki-catalog по категории
+function categoryShikiParams(cat, page, limit) {
     const L = limit || PAGE_SIZE;
-    if (cat === 'ongoing') return `/seasons/now?page=${page}&limit=${L}`;
-    if (cat === 'popular') return `/top/anime?filter=bypopularity&page=${page}&limit=${L}`;
-    return `/top/anime?page=${page}&limit=${L}`;
+    if (cat === 'ongoing') return `order=ranked&status=ongoing&kind=tv,ona&page=${page}&limit=${L}`;
+    if (cat === 'popular') return `order=popularity&kind=tv,movie,ona&page=${page}&limit=${L}`;
+    return `order=ranked&kind=tv,movie,ona&page=${page}&limit=${L}`;
+}
+
+// Обёртка для /shiki-catalog
+function shikiCatalogFetch(params, signal) {
+    const url = `/shiki-catalog?${params}`;
+    return signal ? fetch(url, { signal }) : fetch(url);
 }
 
 function getRow(cat) {
@@ -2868,13 +2876,13 @@ async function fetchCarousel(cat) {
     renderCarousel(cat);
 
     try {
-        const res = await jikanFetch(categoryEndpoint(cat, 1, ROW_LIMIT), AbortSignal.timeout(15000));
+        const res = await shikiCatalogFetch(categoryShikiParams(cat, 1, ROW_LIMIT), AbortSignal.timeout(15000));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        const items = (data.data || []).map(mapJikanItem).filter(a => !a.isAdult);
+        const items = (Array.isArray(data) ? data : []).map(normalizeShikimoriItem).filter(a => !a.isAdult && a.rating > 0);
         if (!items.length) throw new Error('empty');
         setRow(cat, items);
-        if (cat === 'ongoing') ongoingDataSource = 'jikan';
+        if (cat === 'ongoing') ongoingDataSource = 'shikimori';
     } catch (err) {
         if (cat === 'ongoing') {
             const fb = await fetchOngoingFallback();
@@ -2886,9 +2894,6 @@ async function fetchCarousel(cat) {
     } finally {
         rowLoadState[cat] = false;
         renderCarousel(cat);
-        if (currentLang === 'ru' && getRow(cat).length) {
-            enrichWithRussianTitles(getRow(cat)).then(() => renderCarousel(cat)).catch(() => {});
-        }
     }
 }
 
@@ -2971,16 +2976,16 @@ async function fetchCategory({ cat = 'top', page = 1, append = false } = {}) {
     if (!append) setCatalogLoadingState(true);
 
     try {
-        const res = await jikanFetch(categoryEndpoint(cat, page, PAGE_SIZE), currentSearchController.signal);
+        const res = await shikiCatalogFetch(categoryShikiParams(cat, page, PAGE_SIZE), currentSearchController.signal);
         const data = await res.json();
         if (requestToken !== latestSearchToken) return;
 
-        const items = (data.data || []).map(mapJikanItem);
+        const items = (Array.isArray(data) ? data : []).map(normalizeShikimoriItem).filter(a => !a.isAdult);
         currentCatalogMode = cat;
         listCategory = cat;
         currentCatalogQuery = '';
         currentCatalogPage = page;
-        hasMoreAnime = Boolean(data.pagination?.has_next_page);
+        hasMoreAnime = items.length >= PAGE_SIZE;
         recommendedAnime = [];
         animeData = append ? mergeAnimeResults(animeData, items) : items;
     } catch (error) {
@@ -3676,22 +3681,16 @@ function scrollToCatalogIfNeeded() {
 // ─── Fetch ────────────────────────────────────────────────────────────────────
 
 async function fetchAnimePage({ query = '', page = 1, signal, orderBy = '' } = {}) {
-    let endpoint;
-    if (query) {
-        endpoint = `/anime?q=${encodeURIComponent(query)}&page=${page}&limit=${PAGE_SIZE}`;
-        if (orderBy) endpoint += `&order_by=${orderBy}&sort=asc`;
-    } else if (orderBy && orderBy !== 'score') {
-        endpoint = `/anime?page=${page}&limit=${PAGE_SIZE}&order_by=${orderBy}&sort=asc`;
-    } else {
-        endpoint = `/top/anime?page=${page}&limit=${PAGE_SIZE}`;
-    }
+    let params = `page=${page}&limit=${PAGE_SIZE}`;
+    if (query)   params += `&search=${encodeURIComponent(query)}`;
+    const order = orderBy === 'title' ? 'name' : orderBy === 'score' ? 'ranked' : 'ranked';
+    params += `&order=${order}`;
+    if (!query)  params += `&kind=tv,movie,ona`;
 
-    const response = await jikanFetch(endpoint, signal);
+    const response = await shikiCatalogFetch(params, signal);
     const data = await response.json();
-    return {
-        items: (data.data || []).map(normalizeAnimeItem),
-        hasNextPage: Boolean(data.pagination?.has_next_page)
-    };
+    const items = (Array.isArray(data) ? data : []).map(normalizeShikimoriItem).filter(a => !a.isAdult);
+    return { items, hasNextPage: items.length >= PAGE_SIZE };
 }
 
 async function fetchTopAnime({ page = 1, append = false, mode = 'full' } = {}) {
@@ -3798,32 +3797,17 @@ async function handleSearch({ scrollToResults = false, source = '' } = {}) {
         const orderBy = currentSortMode === 'title' ? 'title' : currentSortMode === 'rating' ? 'score' : '';
         let searchQuery = query;
 
-        if (isRussian) {
-            // Русский запрос → сразу Shikimori (поддерживает русский нативно)
-            const shikiRes = await fetch(`/shiki-search?q=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(8000) });
-            if (searchToken !== latestSearchToken) return;
-            const shikiData = shikiRes.ok ? await shikiRes.json() : [];
-            animeData = Array.isArray(shikiData) ? shikiData.map(normalizeShikimoriItem) : [];
-            currentCatalogMode = 'search';
-            currentCatalogQuery = query;
-            currentCatalogQueryTranslated = '';
-            currentCatalogPage = 1;
-            hasMoreAnime = false;
-            if (subtitle) subtitle.innerText = t('search_results_label', query);
-            fetchRecommendations(animeData);
-        } else {
-            // Английский/ромадзи → Jikan
-            const result = await fetchAnimePage({ query, page: 1, signal: currentSearchController.signal, orderBy });
-            if (searchToken !== latestSearchToken) return;
-            animeData = result.items;
-            currentCatalogMode = 'search';
-            currentCatalogQuery = query;
-            currentCatalogQueryTranslated = '';
-            currentCatalogPage = 1;
-            hasMoreAnime = result.hasNextPage;
-            if (subtitle) subtitle.innerText = t('search_results_label', query);
-            fetchRecommendations(result.items);
-        }
+        // Shikimori умеет искать и по-русски, и по-английски
+        const result = await fetchAnimePage({ query, page: 1, signal: currentSearchController.signal, orderBy });
+        if (searchToken !== latestSearchToken) return;
+        animeData = result.items;
+        hasMoreAnime = result.hasNextPage;
+        currentCatalogQueryTranslated = '';
+        currentCatalogMode = 'search';
+        currentCatalogQuery = query;
+        currentCatalogPage = 1;
+        if (subtitle) subtitle.innerText = t('search_results_label', query);
+        fetchRecommendations(animeData);
     } catch (error) {
         if (error.name === 'AbortError') return;
         if (subtitle) subtitle.innerText = t('search_error');
