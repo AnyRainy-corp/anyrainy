@@ -2779,9 +2779,10 @@ function categoryShikiParams(cat, page, limit) {
     return `order=ranked&kind=tv,movie,ona&page=${page}&limit=${L}`;
 }
 
-// Обёртка для /shiki-catalog
+// Обёртка для /shiki-catalog (поддерживает BACKEND для GitHub Pages)
 function shikiCatalogFetch(params, signal) {
-    const url = `/shiki-catalog?${params}`;
+    const base = (typeof BACKEND !== 'undefined' && BACKEND) ? BACKEND : '';
+    const url = `${base}/shiki-catalog?${params}`;
     return signal ? fetch(url, { signal }) : fetch(url);
 }
 
