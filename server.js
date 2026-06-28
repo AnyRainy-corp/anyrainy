@@ -382,6 +382,37 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // ── Shikimori: все аниме студии по id студии ──────────────────────────────
+    if (parsed.pathname === '/shiki-studio' && req.method === 'GET') {
+        const q = url.parse(req.url, true).query || {};
+        const id = String(q.id || '').replace(/[^0-9]/g, '');
+        const page = Math.max(1, parseInt(q.page) || 1);
+        if (!id) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
+        const cacheKey = `studio_${id}_p${page}`;
+        if (!global._shikiStudioCache) global._shikiStudioCache = new Map();
+        const hit = global._shikiStudioCache.get(cacheKey);
+        if (hit && hit.exp > Date.now()) {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' });
+            res.end(hit.body); return;
+        }
+        const sPath = `/api/animes?studio[]=${id}&limit=50&page=${page}&order=ranked`;
+        const sOpts = { hostname: 'shikimori.io', path: sPath, headers: { 'User-Agent': 'AnyRainy/1.0', 'Accept': 'application/json' } };
+        const sReq = https.get(sOpts, sRes => {
+            let data = '';
+            sRes.setEncoding('utf8');
+            sRes.on('data', c => { data += c; });
+            sRes.on('end', () => {
+                const body = sRes.statusCode === 200 ? data : '[]';
+                global._shikiStudioCache.set(cacheKey, { body, exp: Date.now() + 3600000 });
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' });
+                res.end(body);
+            });
+        });
+        sReq.on('error', () => { if (!res.writableEnded) { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end('[]'); } });
+        sReq.setTimeout(10000, () => { sReq.destroy(); if (!res.writableEnded) { res.writeHead(504, { 'Content-Type': 'application/json' }); res.end('[]'); } });
+        return;
+    }
+
     // ── Shikimori: все части франшизы по MAL id ────────────────────────────────
     if (parsed.pathname === '/shiki-franchise' && req.method === 'GET') {
         const id = String((url.parse(req.url, true).query || {}).id || '').replace(/[^0-9]/g, '');
@@ -392,7 +423,7 @@ const server = http.createServer((req, res) => {
             res.end(cachedFr.body); return;
         }
         const shikiGet = path => new Promise((resolve, reject) => {
-            const r = https.get({ hostname: 'shikimori.one', path, headers: { 'User-Agent': 'AnyRainy', 'Accept': 'application/json' } }, sRes => {
+            const r = https.get({ hostname: 'shikimori.io', path, headers: { 'User-Agent': 'AnyRainy', 'Accept': 'application/json' } }, sRes => {
                 let data = '';
                 sRes.setEncoding('utf8');
                 sRes.on('data', c => { data += c; });
@@ -437,7 +468,7 @@ const server = http.createServer((req, res) => {
             res.end(cached.body); return;
         }
         const opts = {
-            hostname: 'shikimori.one',
+            hostname: 'shikimori.io',
             path: `/api/animes/${id}`,
             headers: { 'User-Agent': 'AnyRainy', 'Accept': 'application/json' },
         };
@@ -465,7 +496,7 @@ const server = http.createServer((req, res) => {
         const q = String((url.parse(req.url, true).query || {}).q || '').trim().slice(0, 200);
         if (!q) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end('[]'); return; }
         const sPath = `/api/animes?search=${encodeURIComponent(q)}&limit=20&order=ranked`;
-        const sOpts = { hostname: 'shikimori.one', path: sPath, headers: { 'User-Agent': 'AnyRainy/1.0', 'Accept': 'application/json' } };
+        const sOpts = { hostname: 'shikimori.io', path: sPath, headers: { 'User-Agent': 'AnyRainy/1.0', 'Accept': 'application/json' } };
         const sReq2 = https.get(sOpts, sRes2 => {
             let data = '';
             sRes2.setEncoding('utf8');
@@ -477,6 +508,41 @@ const server = http.createServer((req, res) => {
         });
         sReq2.on('error', () => { if (!res.writableEnded) { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end('[]'); } });
         sReq2.setTimeout(8000, () => { sReq2.destroy(); if (!res.writableEnded) { res.writeHead(504, { 'Content-Type': 'application/json' }); res.end('[]'); } });
+        return;
+    }
+
+    // ── Shikimori full (аниме + related + roles) ───────────────────────────────
+    if (parsed.pathname === '/shiki-full' && req.method === 'GET') {
+        const id = String((url.parse(req.url, true).query || {}).id || '').replace(/[^0-9]/g, '');
+        if (!id) { res.writeHead(400); res.end('{}'); return; }
+        if (!global._shikiFullCache) global._shikiFullCache = new Map();
+        const hit = global._shikiFullCache.get(id);
+        if (hit && hit.exp > Date.now()) {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' });
+            res.end(hit.body); return;
+        }
+        let pending = 3, results = {}, sent = false;
+        function tryDone() {
+            if (--pending > 0) return;
+            if (sent || res.writableEnded) return;
+            sent = true;
+            const combined = JSON.stringify({ ...(results.main || {}), related: results.related || [], roles: results.roles || [] });
+            global._shikiFullCache.set(id, { body: combined, exp: Date.now() + 3600000 });
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=3600' });
+            res.end(combined);
+        }
+        function shFetch(shPath, key) {
+            const r = https.get({ hostname: 'shikimori.io', path: shPath, headers: { 'User-Agent': 'AnyRainy', 'Accept': 'application/json' } }, rs => {
+                let d = '';
+                rs.on('data', c => d += c);
+                rs.on('end', () => { try { results[key] = JSON.parse(d); } catch(_) { results[key] = key === 'main' ? {} : []; } tryDone(); });
+            });
+            r.on('error', () => { results[key] = key === 'main' ? {} : []; tryDone(); });
+            r.setTimeout(12000, () => { r.destroy(); results[key] = key === 'main' ? {} : []; tryDone(); });
+        }
+        shFetch(`/api/animes/${id}`, 'main');
+        shFetch(`/api/animes/${id}/related`, 'related');
+        shFetch(`/api/animes/${id}/roles`, 'roles');
         return;
     }
 
@@ -532,11 +598,6 @@ const server = http.createServer((req, res) => {
                 hlsRes.on('data', c => { body += c; });
                 hlsRes.on('end', () => {
                     const base = target.substring(0, target.lastIndexOf('/') + 1);
-                    // Абсолютный URL самого сервера, чтобы сегменты резолвились правильно
-                    // даже когда клиент на другом домене (например GitHub Pages)
-                    const proto = req.headers['x-forwarded-proto'] || 'https';
-                    const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:3456';
-                    const selfBase = `${proto}://${host}`;
                     const rewritten = body.split('\n').map(line => {
                         const trimmed = line.trim();
                         if (!trimmed || trimmed.startsWith('#')) return line;
@@ -544,7 +605,7 @@ const server = http.createServer((req, res) => {
                         if (trimmed.startsWith('http')) abs = trimmed;
                         else if (trimmed.startsWith('/')) abs = `${u.protocol}//${u.hostname}${trimmed}`;
                         else abs = base + trimmed;
-                        return `${selfBase}/hls-proxy?url=${encodeURIComponent(abs)}`;
+                        return `/hls-proxy?url=${encodeURIComponent(abs)}`;
                     }).join('\n');
                     res.writeHead(200, {
                         'Content-Type': 'application/vnd.apple.mpegurl',
@@ -647,6 +708,73 @@ const server = http.createServer((req, res) => {
                     res.end(JSON.stringify({ error: e.message }));
                 }
             });
+        return;
+    }
+
+    // ── Admin: Featured API ─────────────────────────────────────────────────────
+    const FEATURED_FILE = path.join(__dirname, 'featured.json');
+    const UPLOADS_DIR   = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR);
+
+    if (parsed.pathname === '/admin') {
+        const adminPath = path.join(__dirname, 'featured-admin.html');
+        fs.readFile(adminPath, (err, data) => {
+            if (err) { res.writeHead(404); res.end('featured-admin.html not found'); return; }
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(data);
+        });
+        return;
+    }
+
+    if (parsed.pathname === '/api/featured' && req.method === 'GET') {
+        try {
+            const data = fs.existsSync(FEATURED_FILE) ? fs.readFileSync(FEATURED_FILE, 'utf8') : '[]';
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-cache' });
+            res.end(data);
+        } catch(e) { res.writeHead(500); res.end('[]'); }
+        return;
+    }
+
+    if (parsed.pathname === '/api/featured' && req.method === 'POST') {
+        let body = '';
+        req.on('data', c => { body += c; });
+        req.on('end', () => {
+            try {
+                JSON.parse(body);
+                fs.writeFileSync(FEATURED_FILE, body, 'utf8');
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end('{"ok":true}');
+            } catch(e) { res.writeHead(400); res.end(JSON.stringify({ error: e.message })); }
+        });
+        return;
+    }
+
+    if (parsed.pathname === '/api/upload-video' && req.method === 'POST') {
+        const ct = req.headers['content-type'] || '';
+        const bm = ct.match(/boundary=(.+)/);
+        if (!bm) { res.writeHead(400); res.end('no boundary'); return; }
+        const boundary = bm[1].trim();
+        const chunks = [];
+        req.on('data', c => chunks.push(c));
+        req.on('end', () => {
+            try {
+                const buf = Buffer.concat(chunks);
+                const bBuf = Buffer.from('\r\n--' + boundary);
+                // find filename
+                const hdrEnd = buf.indexOf('\r\n\r\n');
+                const header  = buf.slice(0, hdrEnd).toString();
+                const fnMatch = header.match(/filename="([^"]+)"/);
+                if (!fnMatch) { res.writeHead(400); res.end('no file'); return; }
+                const ext      = path.extname(fnMatch[1]) || '.mp4';
+                const filename = `vid_${Date.now()}${ext}`;
+                const fileStart = hdrEnd + 4;
+                const fileEnd   = buf.indexOf(bBuf, fileStart);
+                const fileData  = buf.slice(fileStart, fileEnd > 0 ? fileEnd : undefined);
+                fs.writeFileSync(path.join(UPLOADS_DIR, filename), fileData);
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+                res.end(JSON.stringify({ url: `/uploads/${filename}` }));
+            } catch(e) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
+        });
         return;
     }
 

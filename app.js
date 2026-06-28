@@ -593,7 +593,7 @@ const STRINGS = {
         in_favorites: 'В избранном', to_favorites: 'В избранное', anime_loading: 'Загрузка аниме...',
         kodik_unavailable: 'Kodik недоступен', kodik_unavailable_sub: 'Русская озвучка не найдена для этого аниме.<br>Попробуй Megaplay.',
         player_error_title: 'Плеер не загрузился', player_error_sub: 'Попробуй другой сервер или открой напрямую',
-        next_server: 'Следующий сервер', open_browser_btn: 'Открыть в браузере',
+        next_server: 'Следующий сервер', reload_player_btn: 'Перезагрузить',
         newtab_notice: 'Этот плеер нельзя встроить в страницу', newtab_open_btn: 'Открыть JutSu',
         studios_nav: 'Студии', studios_title: 'Аниме-студии', studios_sub: 'Работы по производящей студии',
         studios_search: 'Поиск студии...', studios_anime_count: n => `${n} аниме`,
@@ -798,7 +798,7 @@ const STRINGS = {
         in_favorites: 'In favorites', to_favorites: 'Add to favorites', anime_loading: 'Loading anime...',
         kodik_unavailable: 'Kodik unavailable', kodik_unavailable_sub: 'Russian dub not found for this anime.<br>Try Megaplay.',
         player_error_title: 'Player failed to load', player_error_sub: 'Try another server or open directly',
-        next_server: 'Next server', open_browser_btn: 'Open in browser',
+        next_server: 'Next server', reload_player_btn: 'Reload',
         newtab_notice: 'This player cannot be embedded', newtab_open_btn: 'Open JutSu',
         studios_nav: 'Studios', studios_title: 'Anime studios', studios_sub: 'Works by production studio',
         studios_search: 'Search studio...', studios_anime_count: n => `${n} anime`,
@@ -3297,6 +3297,12 @@ function setGenreMode(mode) {
     }
 }
 
+function filterByGenre(genre) {
+    selectedGenres.clear();
+    selectedGenres.add(genre);
+    openCatalog().then(() => { renderGenreFilterList(); });
+}
+
 function toggleGenre(genre) {
     if (selectedGenres.has(genre)) selectedGenres.delete(genre);
     else selectedGenres.add(genre);
@@ -3788,42 +3794,36 @@ async function handleSearch({ scrollToResults = false, source = '' } = {}) {
     currentSearchController = new AbortController();
 
     try {
-        // Translate Russian query to English for Jikan API
-        let searchQuery = query;
-        if (/[Ѐ-ӿ]/.test(query)) {
-            const translated = await translateQueryForSearch(query);
-            if (searchToken !== latestSearchToken) return;
-            if (translated) { searchQuery = translated; }
-        }
-
+        const isRussian = /[Ѐ-ӿ]/.test(query);
         const orderBy = currentSortMode === 'title' ? 'title' : currentSortMode === 'rating' ? 'score' : '';
-        const result = await fetchAnimePage({
-            query: searchQuery,
-            page: 1,
-            signal: currentSearchController.signal,
-            orderBy
-        });
-        if (searchToken !== latestSearchToken) return;
+        let searchQuery = query;
 
-        animeData = result.items;
-        // Фоллбэк на Shikimori для русских запросов без результатов
-        if (animeData.length === 0 && /[Ѐ-ӿ]/.test(query)) {
-            try {
-                const shikiRes = await fetch(`/shiki-search?q=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(6000) });
-                if (searchToken !== latestSearchToken) return;
-                const shikiData = await shikiRes.json();
-                if (Array.isArray(shikiData) && shikiData.length > 0) {
-                    animeData = shikiData.map(normalizeShikimoriItem);
-                }
-            } catch (_) {}
+        if (isRussian) {
+            // Русский запрос → сразу Shikimori (поддерживает русский нативно)
+            const shikiRes = await fetch(`/shiki-search?q=${encodeURIComponent(query)}`, { signal: AbortSignal.timeout(8000) });
+            if (searchToken !== latestSearchToken) return;
+            const shikiData = shikiRes.ok ? await shikiRes.json() : [];
+            animeData = Array.isArray(shikiData) ? shikiData.map(normalizeShikimoriItem) : [];
+            currentCatalogMode = 'search';
+            currentCatalogQuery = query;
+            currentCatalogQueryTranslated = '';
+            currentCatalogPage = 1;
+            hasMoreAnime = false;
+            if (subtitle) subtitle.innerText = t('search_results_label', query);
+            fetchRecommendations(animeData);
+        } else {
+            // Английский/ромадзи → Jikan
+            const result = await fetchAnimePage({ query, page: 1, signal: currentSearchController.signal, orderBy });
+            if (searchToken !== latestSearchToken) return;
+            animeData = result.items;
+            currentCatalogMode = 'search';
+            currentCatalogQuery = query;
+            currentCatalogQueryTranslated = '';
+            currentCatalogPage = 1;
+            hasMoreAnime = result.hasNextPage;
+            if (subtitle) subtitle.innerText = t('search_results_label', query);
+            fetchRecommendations(result.items);
         }
-        currentCatalogMode = 'search';
-        currentCatalogQuery = query;
-        currentCatalogQueryTranslated = searchQuery !== query ? searchQuery : '';
-        currentCatalogPage = 1;
-        hasMoreAnime = result.hasNextPage;
-        if (subtitle) subtitle.innerText = query ? t('search_results_label', query) : t('popular_now');
-        fetchRecommendations(result.items);
     } catch (error) {
         if (error.name === 'AbortError') return;
         if (subtitle) subtitle.innerText = t('search_error');
@@ -3883,33 +3883,24 @@ function triggerSearch(source = '') {
     handleSearch({ scrollToResults: false, source });
 }
 
-// Live search listeners
+// Sync inputs as user types (без поиска)
 const bigSearchInput = document.getElementById('big-search-input');
 if (bigSearchInput) {
-    bigSearchInput.addEventListener('input', () => {
-        clearTimeout(searchTimeout);
-        syncSearchInputs(bigSearchInput.value, 'big');
-        searchTimeout = setTimeout(() => handleSearch({ source: 'big' }), 350);
-    });
+    bigSearchInput.addEventListener('input', () => { syncSearchInputs(bigSearchInput.value, 'big'); });
 }
 
 const navSearchInput = document.getElementById('nav-search-input');
 if (navSearchInput) {
-    navSearchInput.addEventListener('input', () => {
-        clearTimeout(searchTimeout);
-        syncSearchInputs(navSearchInput.value, 'nav');
-        searchTimeout = setTimeout(() => handleSearch({ source: 'nav' }), 350);
-    });
+    navSearchInput.addEventListener('input', () => { syncSearchInputs(navSearchInput.value, 'nav'); });
 }
 
+// Поиск ТОЛЬКО по Enter
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (document.activeElement.id === 'big-search-input' || document.activeElement.id === 'nav-search-input')) {
+    const id = document.activeElement?.id;
+    if (e.key === 'Enter' && (id === 'big-search-input' || id === 'nav-search-input' || id === 'mobile-search-input')) {
         clearTimeout(searchTimeout);
         e.preventDefault();
-        handleSearch({
-            scrollToResults: true,
-            source: document.activeElement.id === 'nav-search-input' ? 'nav' : 'big'
-        });
+        handleSearch({ scrollToResults: true, source: id === 'nav-search-input' ? 'nav' : id === 'mobile-search-input' ? 'mobile' : 'big' });
     }
 });
 
@@ -4383,48 +4374,19 @@ function renderPlayerUI(anime) {
     container.innerHTML = `
         <div class="space-y-4">
         <div class="watch-page-stack">
-            <div class="watch-hero anim-block">
-                <img src="${proxyImg(anime.image)}" alt="" aria-hidden="true"
-                    class="watch-hero-bg-img">
-                <div class="watch-hero-bg-shade"></div>
-                <div class="watch-hero-inner">
-                    <div class="watch-hero-poster">
-                        <img src="${proxyImg(anime.image)}" alt="${escapeHtml(anime.displayTitle)}"
-                            class="watch-hero-poster-img" onerror="imgFallback(this)">
-                    </div>
-                    <div class="watch-hero-body">
-                        <h2 class="text-xl md:text-3xl font-bold tracking-tight text-white leading-tight" data-title-id="${anime.id}">${escapeHtml(anime.displayTitle)}</h2>
-
-                        <div class="anime-info-table">
-                            ${anime.rating ? `<div class="anime-info-row"><span class="anime-info-label">${t('info_rating')}</span><span class="anime-info-value">★ ${anime.rating} / 10</span></div>` : ''}
-                            ${anime.episodes ? `<div class="anime-info-row"><span class="anime-info-label">${t('info_episodes')}</span><span class="anime-info-value">${anime.episodes}</span></div>` : ''}
-                            ${anime.year ? `<div class="anime-info-row"><span class="anime-info-label">${t('info_year')}</span><span class="anime-info-value">${anime.year}</span></div>` : ''}
-                            ${anime.status ? `<div class="anime-info-row"><span class="anime-info-label">${t('info_status')}</span><span class="anime-info-value">${formatAnimeStatus(anime.status)}</span></div>` : ''}
-                            ${anime.kind ? `<div class="anime-info-row"><span class="anime-info-label">${t('info_type')}</span><span class="anime-info-value">${formatAnimeKind(anime.kind)}</span></div>` : ''}
-                            ${anime.studios?.length ? `<div class="anime-info-row"><span class="anime-info-label">${t('studios_nav')}</span><span class="anime-info-value anime-info-genres">${anime.studios.slice(0, 3).map(s => `<button class="info-genre-tag" style="cursor:pointer;color:#FF5A5F;border-color:rgba(255,90,95,0.35)" data-studio-id="${s.id}" data-studio-name="${escapeHtml(s.name)}" onclick="event.stopPropagation();openStudioAnime(+this.dataset.studioId,this.dataset.studioName)">${escapeHtml(s.name)}</button>`).join('')}</span></div>` : ''}
-                            ${anime.tags?.length ? `<div class="anime-info-row"><span class="anime-info-label">${t('info_genres')}</span><span class="anime-info-value anime-info-genres">${anime.tags.slice(0, 6).map(tag => `<span class="info-genre-tag">${escapeHtml(currentLang === 'ru' ? translateGenre(tag) : tag)}</span>`).join('')}</span></div>` : ''}
-                        </div>
-
-                        ${(() => {
-                            const syn = currentLang === 'ru' && synopsisCache[anime.id] ? synopsisCache[anime.id] : (anime.synopsisEn || anime.synopsis);
-                            if (!syn) return '';
-                            const long = syn.length > 280;
-                            return `<div class="anime-synopsis-wrap">
-                                <p id="anime-synopsis" class="anime-synopsis-text${long ? '' : ' synopsis-expanded'}">${escapeHtml(syn)}</p>
-                                ${long ? `<button id="synopsis-toggle-btn" class="synopsis-toggle-btn" onclick="toggleSynopsis()">${t('info_read_more')}</button>` : ''}
-                            </div>`;
-                        })()}
-
-                        <div class="flex flex-wrap gap-2 mt-1">
-                            <button onclick="toggleFavorite(${anime.id})" data-fav-id="${anime.id}"
-                                class="heart-btn watch-action-btn ${fav ? 'watch-action-btn--active' : ''}">
-                                <i data-lucide="heart" class="w-3.5 h-3.5 ${fav ? 'fill-current' : ''}"></i>
-                                ${fav ? t('in_favorites') : t('to_favorites')}
-                            </button>
-                            <button onclick="copyAnimeLink()" title="${t('share_link')}" class="watch-action-btn">
-                                <i data-lucide="link-2" class="w-3.5 h-3.5"></i>
-                                ${t('share_link')}
-                            </button>
+            <div id="shiki-header-block" class="anim-block">
+                <div class="shiki-wrap">
+                    <img class="shiki-bg" src="${proxyImg(anime.image)}" alt="">
+                    <div class="shiki-bg-shade"></div>
+                    <div class="shiki-inner">
+                        <div class="shiki-title">${escapeHtml(anime.displayTitle)}</div>
+                        <div class="shiki-grid">
+                            <div class="shiki-poster-col">
+                                <img class="shiki-poster-img" src="${proxyImg(anime.image)}" alt="${escapeHtml(anime.displayTitle)}" onerror="imgFallback(this)">
+                            </div>
+                            <div class="shiki-body">
+                                <div class="shiki-info" style="color:rgba(255,255,255,.3);font-size:.8rem;padding-top:4px">Загрузка…</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -4472,6 +4434,7 @@ function renderPlayerUI(anime) {
     setupVideoListeners();
     initCurrentPlayerType();
     loadRelatedAnime(anime.malId);
+    loadShikiHeader(anime);
 }
 
 // ─── Связанные аниме / другие части франшизы (Jikan relations) ────────────────
@@ -4707,6 +4670,227 @@ function stripShikiBBCode(s) {
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
+// ── Shikimori full data (аниме + related + roles) ─────────────────────────────
+const _shikiFullCache = {};
+async function fetchShikiFull(malId) {
+    if (_shikiFullCache[malId]) return _shikiFullCache[malId];
+    try {
+        const base = (typeof BACKEND !== 'undefined' && BACKEND) ? BACKEND : '';
+        const r = await fetch(`${base}/shiki-full?id=${malId}`, { signal: AbortSignal.timeout(15000) });
+        if (!r.ok) throw new Error(r.status);
+        const d = await r.json();
+        _shikiFullCache[malId] = d;
+        return d;
+    } catch(_) { return null; }
+}
+
+const _SHIKI_SOURCE = { manga:'Манга', web_manga:'Веб-манга', original:'Оригинал', visual_novel:'Визуальная новелла', light_novel:'Ранобэ', novel:'Новелла', game:'Игра', book:'Книга', music:'Музыка', other:'Другое' };
+const _SHIKI_KIND   = { tv:'TV', movie:'Фильм', ova:'OVA', ona:'ONA', special:'Спешл', music:'Клип', tv_13:'TV', tv_24:'TV', tv_48:'TV' };
+const _SHIKI_STATUS = { anons:'Анонс', ongoing:'Онгоинг', released:'Вышел' };
+const _SHIKI_LIST   = { planned:'Запланировано', completed:'Просмотрено', watching:'Смотрю', rewatching:'Пересматриваю', dropped:'Брошено', on_hold:'Отложено' };
+const _KEY_ROLES    = new Set(['Director','Series Composition','Music','Character Design','Original Creator','Script','Storyboard','Animation Director']);
+
+function buildShikiHeaderHtml(anime, sd) {
+    const ruTitle     = sd.russian || anime.displayTitle || anime.title || '';
+    const romajiTitle = sd.name || anime.title || '';
+    const jpTitle     = (sd.japanese || [])[0] || '';
+    const kind        = _SHIKI_KIND[sd.kind]   || sd.kind   || '';
+    const statusKey   = sd.status || '';
+    const statusRu    = _SHIKI_STATUS[statusKey] || statusKey;
+    const source      = _SHIKI_SOURCE[sd.source] || '';
+    const genres      = (sd.genres || []).filter(g => g.kind === 'genre');
+    const themes      = (sd.genres || []).filter(g => g.kind === 'theme');
+    const studios     = sd.studios || [];
+    const desc        = stripShikiBBCode(sd.description || '');
+    const imgBase     = (typeof BACKEND !== 'undefined' && BACKEND) ? BACKEND : '';
+
+    const fav = isFavorite(anime.id);
+    const posterBtns = `
+        <button onclick="toggleFavorite(${anime.id})" data-fav-id="${anime.id}" class="heart-btn watch-action-btn ${fav?'watch-action-btn--active':''}" style="font-size:.75rem;padding:5px 10px">
+            <i data-lucide="heart" class="w-3 h-3 ${fav?'fill-current':''}"></i> ${fav ? 'В избранном' : 'В избранное'}
+        </button>
+        <button onclick="copyAnimeLink()" class="watch-action-btn" style="font-size:.75rem;padding:5px 10px">
+            <i data-lucide="link-2" class="w-3 h-3"></i>
+        </button>`;
+
+    const dot = '<span style="color:rgba(255,255,255,.2);margin:0 2px">·</span>';
+    const subtitleParts = [
+        kind ? `<span>${escapeHtml(kind)}</span>` : '',
+        statusKey ? `<span class="shiki-status shiki-status--${statusKey}">${escapeHtml(statusRu)}</span>` : '',
+        anime.year ? `<span>${anime.year}</span>` : '',
+    ].filter(Boolean).join(dot);
+
+    const infoRows = [
+        genres.length ? `<div class="shiki-row"><span class="shiki-lbl">Жанр</span><span class="shiki-val">${genres.map(g=>`<span class="shiki-genre-tag" onclick="filterByGenre('${escapeHtml(g.name)}')">${escapeHtml(g.russian||g.name)}</span>`).join('')}</span></div>` : '',
+        themes.length ? `<div class="shiki-row"><span class="shiki-lbl">Темы</span><span class="shiki-val">${themes.map(g=>`<span class="shiki-genre-tag" onclick="filterByGenre('${escapeHtml(g.name)}')">${escapeHtml(g.russian||g.name)}</span>`).join('')}</span></div>` : '',
+        source    ? `<div class="shiki-row"><span class="shiki-lbl">Источник</span><span class="shiki-val">${escapeHtml(source)}</span></div>` : '',
+        jpTitle   ? `<div class="shiki-row"><span class="shiki-lbl">Японское</span><span class="shiki-val" style="font-size:.72rem;opacity:.55">${escapeHtml(jpTitle)}</span></div>` : '',
+        anime.episodes ? `<div class="shiki-row"><span class="shiki-lbl">Эпизоды</span><span class="shiki-val">${anime.episodes}</span></div>` : '',
+    ].filter(Boolean).join('');
+
+    const studioHtml = studios.length ? studios.slice(0,3).map(s => {
+        const logoUrl = s.image ? `${imgBase}/img?url=${encodeURIComponent('https://shikimori.io' + s.image)}` : '';
+        return `<div class="shiki-studio-item" onclick="openStudioAnime(${s.id},'${escapeHtml(s.name)}')" title="${escapeHtml(s.name)}">
+            ${logoUrl
+                ? `<img class="shiki-studio-logo" src="${logoUrl}" alt="${escapeHtml(s.name)}" onerror="this.style.display='none';this.nextSibling.style.display='block'"><span class="shiki-studio-name" style="display:none">${escapeHtml(s.name)}</span>`
+                : `<span class="shiki-studio-name">${escapeHtml(s.name)}</span>`}
+        </div>`;
+    }).join('') : '';
+
+    const relatedHtml = (sd.related||[]).slice(0,6).map(rel => {
+        const entry = rel.anime || rel.manga;
+        if (!entry) return '';
+        const isAnime = !!rel.anime;
+        const img = proxyImg(entry.image?.preview ? 'https://shikimori.io' + entry.image.preview : '');
+        const title = entry.russian || entry.name || '';
+        const rel_ru = rel.relation_russian || rel.relation || '';
+        return `<div class="shiki-related-item" ${isAnime ? `onclick="fetchAndWatchByMalId(${entry.id})"` : ''}>
+            <img class="shiki-related-img" src="${img}" onerror="imgFallback(this)" alt="">
+            <div class="shiki-related-meta">
+                <div class="shiki-related-title">${escapeHtml(title)}</div>
+                <span class="shiki-rel-badge">${escapeHtml(rel_ru)}</span>
+            </div>
+        </div>`;
+    }).filter(Boolean).join('');
+
+    const bgSrc = proxyImg(anime.image);
+
+    return `<div class="shiki-wrap anim-block">
+        <img class="shiki-bg" src="${bgSrc}" alt="">
+        <div class="shiki-bg-shade"></div>
+        <div class="shiki-inner">
+            <div>
+                <div class="shiki-title">${escapeHtml(ruTitle)}${romajiTitle && romajiTitle !== ruTitle ? `<span class="shiki-title-sep">/</span><span class="shiki-title-romaji">${escapeHtml(romajiTitle)}</span>` : ''}</div>
+                ${subtitleParts ? `<div class="shiki-subtitle">${subtitleParts}</div>` : ''}
+            </div>
+            <div class="shiki-grid">
+                <div class="shiki-poster-col">
+                    <img class="shiki-poster-img" src="${bgSrc}" alt="${escapeHtml(ruTitle)}" onerror="imgFallback(this)">
+                    <div class="shiki-poster-btns">${posterBtns}</div>
+                </div>
+                <div class="shiki-body">
+                    <div class="shiki-info">
+                        ${infoRows}
+                        ${desc ? `<div class="shiki-desc-wrap">
+                            <p class="shiki-desc">${escapeHtml(desc)}</p>
+                            <button class="shiki-desc-toggle" onclick="var p=this.previousElementSibling;p.classList.toggle('expanded');this.textContent=p.classList.contains('expanded')?'Свернуть':'Читать полностью'">Читать полностью</button>
+                        </div>` : ''}
+                    </div>
+                    <div class="shiki-studio-col">
+                        ${anime.rating ? `<div class="shiki-rating-block">
+                            <div class="shiki-rating-score">★ ${anime.rating}</div>
+                            <div class="shiki-rating-lbl">Рейтинг</div>
+                        </div>` : ''}
+                        ${studioHtml ? `<div class="shiki-studio-lbl" style="${anime.rating ? 'margin-top:12px' : ''}">Студия</div>${studioHtml}` : ''}
+                    </div>
+                </div>
+            </div>
+            ${relatedHtml ? `<div class="shiki-bottom-single">
+                <div class="shiki-section-title">Связанное</div>
+                <div class="shiki-related-grid">${relatedHtml}</div>
+            </div>` : ''}
+        </div>
+    </div>`;
+}
+
+async function loadShikiHeader(anime) {
+    const el = document.getElementById('shiki-header-block');
+    if (!el) return;
+    const basicSd = { russian: anime.displayTitle, name: anime.title, kind: anime.kind?.toLowerCase(), status: anime.status?.toLowerCase() === 'currently airing' ? 'ongoing' : anime.status?.toLowerCase() === 'finished airing' ? 'released' : 'anons' };
+    el.innerHTML = buildShikiHeaderHtml(anime, basicSd);
+    lucide.createIcons(el);
+    const sd = await fetchShikiFull(anime.malId);
+    if (sd && el.isConnected) {
+        el.innerHTML = buildShikiHeaderHtml(anime, sd);
+        lucide.createIcons(el);
+        staggerAnimBlocks(el);
+        const jpTitle = (sd.japanese || [])[0] || '';
+        _injectVideoBackground(anime.malId, anime.title || anime.displayTitle, jpTitle, sd.russian || '');
+    }
+}
+
+async function _injectVideoBackground(malId, titleEn, titleJp, titleRu) {
+    const wrap = document.querySelector('#shiki-header-block .shiki-wrap');
+    if (!wrap) return;
+
+    let youtubeId = null;
+
+    // 1. Официальный трейлер из Jikan — самый точный источник
+    try {
+        const detail = await fetchAnimeDetail(malId);
+        if (detail?.youtubeId) youtubeId = detail.youtubeId;
+    } catch (_) {}
+
+    // 2. Если нет трейлера и есть VPS — умный поиск опенинга через yt-dlp
+    if (!youtubeId && BACKEND) {
+        // Запросы по убыванию точности:
+        // - японское название даёт лучший результат на YT
+        // - английское с "OP 1" — стандартный формат тайтла опенинга
+        // - английское с "opening" — широкий поиск
+        const queries = [
+            titleJp  ? `${titleJp} OP 1`            : null,
+            titleEn  ? `${titleEn} OP 1 full`       : null,
+            titleEn  ? `${titleEn} opening 1`        : null,
+            titleRu  ? `${titleRu} опенинг`          : null,
+        ].filter(Boolean);
+
+        for (const q of queries) {
+            if (youtubeId) break;
+            try {
+                const r = await fetch(`${BACKEND}/yt-search?q=${encodeURIComponent(q)}`, { signal: AbortSignal.timeout(10000) });
+                const d = r.ok ? await r.json() : null;
+                if (d?.id) youtubeId = d.id;
+            } catch (_) {}
+        }
+    }
+
+    if (!youtubeId) return;
+    if (!document.querySelector('#shiki-header-block .shiki-wrap')) return;
+
+    let el;
+    if (BACKEND) {
+        el = document.createElement('video');
+        el.className = 'shiki-video-bg';
+        el.src = `${BACKEND}/yt-stream?id=${youtubeId}`;
+        el.autoplay = true;
+        el.muted = true;
+        el.loop = true;
+        el.playsInline = true;
+        el.addEventListener('canplay', () => { el.style.opacity = '1'; }, { once: true });
+        el.addEventListener('error', () => { el.remove(); }, { once: true });
+    } else {
+        el = document.createElement('iframe');
+        el.className = 'shiki-video-bg';
+        el.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(youtubeId)}?autoplay=1&mute=1&loop=1&playlist=${encodeURIComponent(youtubeId)}&controls=0&disablekb=1&rel=0`;
+        el.allow = 'autoplay';
+        el.setAttribute('allowfullscreen', '');
+        el.addEventListener('load', () => { setTimeout(() => { el.style.opacity = '1'; }, 300); }, { once: true });
+    }
+
+    wrap.insertBefore(el, wrap.firstChild);
+}
+
+async function _injectFranchiseSlot(malId) {
+    let details;
+    try { details = await getFranchiseDetails(malId); } catch (_) { return; }
+    const slot = document.getElementById('shiki-franchise-slot');
+    if (!slot || !details?.length) return;
+    const items = details.filter(d => d.type !== 'Music');
+    if (items.length < 2) return;
+    const html = items.map(d => {
+        const isCur = d.malId === Number(malId);
+        const kind = d.type ? formatAnimeKind(d.type) : '';
+        return `<div class="shiki-fr-item${isCur ? ' shiki-fr-item--current' : ''}" ${isCur ? '' : `onclick="fetchAndWatchByMalId(${d.malId})"`} title="${escapeHtml(d.titleRu || d.title)}">
+            <img class="shiki-fr-img" src="${proxyImg(d.image)}" onerror="imgFallback(this)" alt="">
+            <div class="shiki-fr-title">${escapeHtml(d.titleRu || d.title)}</div>
+            <div class="shiki-fr-meta">${[d.year, kind].filter(Boolean).join(' · ')}</div>
+        </div>`;
+    }).join('');
+    slot.innerHTML = `
+        <div class="shiki-section-title">Франшиза <span style="opacity:.4;font-weight:400;font-size:.9em">${items.length}</span></div>
+        <div class="shiki-fr-scroll">${html}</div>`;
+}
+
 async function fetchShiki(malId) {
     if (_shikiCache[malId] !== undefined) return _shikiCache[malId];
     try {
@@ -5256,28 +5440,76 @@ function selectStudio(studioId, studioName) {
     _selectStudioInternal(studioId, studioName);
 }
 
-function _selectStudioInternal(studioId, studioName) {
+const _shikiStudioCache = {};
+
+async function _selectStudioInternal(studioId, studioName) {
     _currentStudioId = studioId;
-    // update active chip highlight
     document.querySelectorAll('.studio-chip').forEach(el => {
         el.classList.toggle('studio-chip--active', +el.dataset.studioId === studioId);
     });
-    // show anime panel
     const panel = document.getElementById('studio-anime-panel');
     const titleEl = document.getElementById('studio-anime-title');
     const grid = document.getElementById('studio-anime-grid');
+    const loadMoreBtn = document.getElementById('studio-load-more');
     if (!panel || !grid) return;
-
-    const studios = _buildStudioMap();
-    const studio = studios.find(s => s.id === studioId);
-    if (!studio) return;
-
     if (titleEl) titleEl.textContent = studioName;
-    grid.innerHTML = renderAnimeCards(studio.anime);
     panel.classList.remove('hidden');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    grid.innerHTML = `<div class="col-span-full flex justify-center py-10"><span class="player-play-spinner"></span></div>`;
+    if (loadMoreBtn) loadMoreBtn.remove();
+
+    const page = 1;
+    let items = _shikiStudioCache[studioId];
+    if (!items) {
+        try {
+            const r = await fetch(`/shiki-studio?id=${studioId}&page=${page}`, { signal: AbortSignal.timeout(12000) });
+            const raw = r.ok ? await r.json() : [];
+            items = raw.filter(m => m.kind !== 'music' && m.kind !== 'cm').map(normalizeShikiMember);
+            _shikiStudioCache[studioId] = items;
+        } catch (_) { items = []; }
+    }
+
+    if (_currentStudioId !== studioId) return;
+
+    if (!items.length) {
+        grid.innerHTML = `<p class="col-span-full text-center text-gray-400 py-8">Ничего не найдено</p>`;
+        return;
+    }
+
+    grid.innerHTML = renderAnimeCards(items);
     lucide.createIcons();
     staggerAnimItems(grid);
-    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    if (items.length >= 50) {
+        const btn = document.createElement('button');
+        btn.id = 'studio-load-more';
+        btn.className = 'watch-action-btn mx-auto mt-4 block';
+        btn.textContent = 'Загрузить ещё';
+        btn.onclick = () => _loadMoreStudioAnime(studioId, studioName, 2);
+        panel.appendChild(btn);
+    }
+}
+
+async function _loadMoreStudioAnime(studioId, studioName, page) {
+    const btn = document.getElementById('studio-load-more');
+    const grid = document.getElementById('studio-anime-grid');
+    if (btn) { btn.disabled = true; btn.textContent = 'Загрузка…'; }
+    try {
+        const r = await fetch(`/shiki-studio?id=${studioId}&page=${page}`, { signal: AbortSignal.timeout(12000) });
+        const raw = r.ok ? await r.json() : [];
+        const items = raw.filter(m => m.kind !== 'music' && m.kind !== 'cm').map(normalizeShikiMember);
+        if (_currentStudioId !== studioId) return;
+        if (items.length) {
+            grid.insertAdjacentHTML('beforeend', renderAnimeCards(items));
+            lucide.createIcons();
+            staggerAnimItems(grid);
+        }
+        if (btn) {
+            if (items.length >= 50) { btn.disabled = false; btn.textContent = 'Загрузить ещё'; btn.onclick = () => _loadMoreStudioAnime(studioId, studioName, page + 1); }
+            else btn.remove();
+        }
+    } catch (_) { if (btn) { btn.disabled = false; btn.textContent = 'Загрузить ещё'; } }
 }
 
 function filterStudios(query) {
@@ -6036,12 +6268,12 @@ function buildIframeInner(src) {
             <p class="font-semibold">${t('player_error_title')}</p>
             <p class="text-sm text-gray-400">${t('player_error_sub')}</p>
             <div class="flex gap-3 flex-wrap justify-center mt-2">
+                <button onclick="reloadCurrentPlayer()" class="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-semibold hover:bg-white/20 transition-colors">
+                    ${t('reload_player_btn')}
+                </button>
                 <button onclick="nextServer()" class="px-4 py-2 bg-airbnb text-white rounded-xl text-sm font-semibold hover:bg-airbnbDark transition-colors">
                     ${t('next_server')}
                 </button>
-                <a href="${safeSrc}" target="_blank" rel="noopener" class="px-4 py-2 bg-white/10 text-white rounded-xl text-sm font-semibold hover:bg-white/20 transition-colors">
-                    ${t('open_browser_btn')}
-                </a>
             </div>
         </div>
         <iframe id="anime-iframe"
@@ -6092,6 +6324,13 @@ function showPlayerError() {
     clearTimeout(window._playerErrorTimer);
     const el = document.getElementById('player-error');
     if (el) { el.classList.remove('hidden'); el.classList.add('flex'); lucide.createIcons(); }
+}
+
+// Перезагрузить текущий плеер
+function reloadCurrentPlayer() {
+    const el = document.getElementById('player-error');
+    if (el) { el.classList.add('hidden'); el.classList.remove('flex'); }
+    setServer(currentServerIndex);
 }
 
 // Переключиться на следующий плеер
@@ -6959,7 +7198,7 @@ function buildWatchLayoutSettingHtml() {
 
 function buildWatchPlayerTabInner() {
     const activeKey = getActiveServers()[currentServerIndex]?.key;
-    const visible = getActiveServers().filter(s => _playerAvailability[s.key] !== false || s.key === activeKey);
+    const visible = getActiveServers();
     if (!visible.length) return `<p class="watch-sidebar-empty">${escapeHtml(t('kodik_unavailable'))}</p>`;
     return `<div class="watch-sidebar-list watch-sidebar-list--anim" role="list">
         ${visible.map((s, i) => `
@@ -7615,7 +7854,6 @@ function buildPlayerPickerHtml() {
     const activeKey = getActiveServers()[currentServerIndex]?.key;
     const serverItems = getActiveServers()
         .map((s, i) => ({ s, i }))
-        .filter(({ s }) => _playerAvailability[s.key] !== false || s.key === activeKey)
         .map(({ s, i }) => {
             const disabled = locked4K && s.type !== 'libria';
             const active = i === currentServerIndex;
