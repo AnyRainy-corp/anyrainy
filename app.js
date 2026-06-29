@@ -2779,10 +2779,10 @@ function categoryShikiParams(cat, page, limit) {
     return `order=ranked&kind=tv,movie,ona&page=${page}&limit=${L}`;
 }
 
-// Обёртка для /shiki-catalog (поддерживает BACKEND для GitHub Pages)
+// Shikimori API напрямую из браузера (поддерживает CORS)
+// Параметры уже в формате Shikimori: order, kind, status, search, page, limit
 function shikiCatalogFetch(params, signal) {
-    const base = (typeof BACKEND !== 'undefined' && BACKEND) ? BACKEND : '';
-    const url = `${base}/shiki-catalog?${params}`;
+    const url = `https://shikimori.io/api/animes?${params}`;
     return signal ? fetch(url, { signal }) : fetch(url);
 }
 
@@ -5396,17 +5396,31 @@ function openStudioAnime(studioId, studioName) {
     openStudiosPage(studioId, studioName);
 }
 
-function renderStudiosSection() {
+let _allShikiStudios = [];
+
+async function renderStudiosSection() {
     const container = document.getElementById('studios-chips');
     if (!container) return;
     _currentStudioFilter = '';
+
+    if (!_allShikiStudios.length) {
+        container.innerHTML = `<div class="col-span-full flex justify-center py-8"><span class="player-play-spinner"></span></div>`;
+        try {
+            const r = await fetch('/shiki-studios', { signal: AbortSignal.timeout(10000) });
+            const raw = r.ok ? await r.json() : [];
+            // Только реальные студии с названием
+            _allShikiStudios = raw.filter(s => s.real && s.name).sort((a, b) => a.name.localeCompare(b.name));
+        } catch (_) {}
+    }
+
     _renderStudioChips(container);
 }
 
 function _renderStudioChips(container) {
-    const studios = _buildStudioMap();
     const query = _currentStudioFilter.toLowerCase();
-    const filtered = query ? studios.filter(s => s.name.toLowerCase().includes(query)) : studios;
+    const filtered = query
+        ? _allShikiStudios.filter(s => s.name.toLowerCase().includes(query) || (s.filtered_name || '').toLowerCase().includes(query))
+        : _allShikiStudios;
 
     if (!filtered.length) {
         container.innerHTML = `<p class="text-gray-500 dark:text-gray-400 text-sm col-span-full py-6 text-center">${t('studios_no_data')}</p>`;
@@ -5414,11 +5428,13 @@ function _renderStudioChips(container) {
     }
     container.innerHTML = filtered.map(s => `
         <button class="studio-chip ${_currentStudioId === s.id ? 'studio-chip--active' : ''}"
-                data-studio-id="${s.id}" data-studio-name="${escapeHtml(s.name)}"
-                onclick="selectStudio(+this.dataset.studioId, this.dataset.studioName)">
+                data-studio-id="${s.id}" data-studio-name="${escapeHtml(s.name)}">
             <span class="studio-chip-name">${escapeHtml(s.name)}</span>
-            <span class="studio-chip-count">${t('studios_anime_count', s.anime.length)}</span>
         </button>`).join('');
+
+    container.querySelectorAll('.studio-chip').forEach(btn => {
+        btn.addEventListener('click', () => selectStudio(+btn.dataset.studioId, btn.dataset.studioName));
+    });
 }
 
 function selectStudio(studioId, studioName) {

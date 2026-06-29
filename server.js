@@ -383,6 +383,30 @@ const server = http.createServer((req, res) => {
     }
 
     // ── Shikimori: все аниме студии по id студии ──────────────────────────────
+    // ── Shikimori: список всех студий ────────────────────────────────────────
+    if (parsed.pathname === '/shiki-studios' && req.method === 'GET') {
+        if (!global._shikiStudiosListCache) global._shikiStudiosListCache = { body: null, exp: 0 };
+        if (global._shikiStudiosListCache.body && global._shikiStudiosListCache.exp > Date.now()) {
+            res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=86400' });
+            res.end(global._shikiStudiosListCache.body); return;
+        }
+        const sOpts = { hostname: 'shikimori.io', path: '/api/studios', headers: { 'User-Agent': 'AnyRainy/1.0', 'Accept': 'application/json' } };
+        const sReq = https.get(sOpts, sRes => {
+            let data = '';
+            sRes.setEncoding('utf8');
+            sRes.on('data', c => { data += c; });
+            sRes.on('end', () => {
+                const body = sRes.statusCode === 200 ? data : '[]';
+                global._shikiStudiosListCache = { body, exp: Date.now() + 86400000 };
+                res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'public, max-age=86400' });
+                res.end(body);
+            });
+        });
+        sReq.on('error', () => { if (!res.writableEnded) { res.writeHead(502); res.end('[]'); } });
+        sReq.setTimeout(8000, () => { sReq.destroy(); if (!res.writableEnded) { res.writeHead(504); res.end('[]'); } });
+        return;
+    }
+
     if (parsed.pathname === '/shiki-studio' && req.method === 'GET') {
         const q = url.parse(req.url, true).query || {};
         const id = String(q.id || '').replace(/[^0-9]/g, '');
