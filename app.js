@@ -9075,20 +9075,37 @@ async function fetchAndWatchByMalId(malId) {
     showAnimeLoadingScreen('');
     setLoadingProgress('anime', 8);
 
+    let anime = null;
+
+    // 1. Пробуем Jikan
     try {
-        setLoadingProgress('anime', 25);
-        const res = await jikanFetch(`/anime/${malId}`);
+        setLoadingProgress('anime', 20);
+        const res = await jikanFetch(`/anime/${malId}`, AbortSignal.timeout(8000));
         const data = await res.json();
-        if (!data.data) { stopLoadingProgress('anime'); showSection('home'); clearAnimeUrl(); return; }
-        setLoadingProgress('anime', 40);
-        const anime = normalizeAnimeItem(data.data);
-        if (!animeData.find(a => a.id === anime.id)) animeData.push(anime);
-        await watchAnime(malId);
-    } catch (_) {
+        if (data?.data) anime = normalizeAnimeItem(data.data);
+    } catch (_) {}
+
+    // 2. Если Jikan не дал результат — берём с Shikimori
+    if (!anime) {
+        try {
+            setLoadingProgress('anime', 35);
+            const res = await fetch(`/shiki-full?id=${malId}`, { signal: AbortSignal.timeout(10000) });
+            const sd = await res.json();
+            if (sd && (sd.id || sd.name)) anime = normalizeShikimoriItem(sd);
+        } catch (_) {}
+    }
+
+    // 3. Ничего не нашли
+    if (!anime) {
         stopLoadingProgress('anime');
         showSection('home');
         clearAnimeUrl();
+        return;
     }
+
+    setLoadingProgress('anime', 50);
+    if (!animeData.find(a => a.id === anime.id)) animeData.push(anime);
+    await watchAnime(malId);
 }
 
 // Кнопки назад/вперёд в браузере
